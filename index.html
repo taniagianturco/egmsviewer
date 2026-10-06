@@ -1,1 +1,1846 @@
-egms start
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EGMS Viewer - Mappa spostamento del suolo</title>
+<style>
+  :root {
+    --ink: #1d2c33;
+    --ink-2: #2c3f48;
+    --muted: #5a6a72;
+    --paper: #eef1ef;
+    --panel: #fbfcfb;
+    --line: #d2d9d7;
+    --line-2: #e3e8e6;
+    --accent: #0e6f7b;
+    --accent-2: #0b5963;
+    --warn: #a9610a;
+    --danger: #b3382c;
+    --radius: 7px;
+    --font: "Avenir Next", "Segoe UI", "Helvetica Neue", Roboto, "Noto Sans", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: var(--font); font-size: 14px; color: var(--ink);
+    background: var(--paper); overflow: hidden;
+  }
+  button, input { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  #app { display: grid; grid-template-rows: auto 1fr auto; height: 100%; }
+
+  /* ---------- barra superiore ---------- */
+  #topbar {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; margin-right: 6px; }
+  .brand svg { display: block; }
+  .brand b { font-size: 16px; font-weight: 650; letter-spacing: .01em; }
+  .actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .btn {
+    height: 34px; padding: 0 14px; border-radius: var(--radius);
+    border: 1px solid var(--line); background: #fff; cursor: pointer;
+    transition: background .12s, border-color .12s;
+  }
+  .btn:hover:not(:disabled) { background: #f1f5f4; border-color: #bcc7c4; }
+  .btn:disabled { opacity: .42; cursor: not-allowed; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .btn.primary:hover:not(:disabled) { background: var(--accent-2); border-color: var(--accent-2); }
+  .switch { display: inline-flex; align-items: center; gap: 8px; margin-left: 6px; cursor: pointer; user-select: none; }
+  .switch input { width: 16px; height: 16px; accent-color: var(--accent); margin: 0; cursor: pointer; }
+  .switch input:disabled + span { opacity: .5; }
+  #status {
+    margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums;
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
+  }
+
+  /* ---------- mappa ---------- */
+  #mapWrap { position: relative; min-height: 0; background: #f6f8f7; }
+  #mapCanvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+  #mapCanvas.dragging { cursor: grabbing; }
+  #mapCanvas.zoom { cursor: crosshair; }
+  #mapTools { position: absolute; top: 8px; right: 10px; display: none; }
+  #empty {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px;
+    pointer-events: none;
+  }
+  #empty .card {
+    pointer-events: auto; max-width: 480px; text-align: center; padding: 30px 32px 28px;
+    border: 1.5px dashed #aebbb8; border-radius: 12px; background: rgba(251,252,251,.92);
+  }
+  #empty h2 { margin: 0 0 8px; font-size: 19px; font-weight: 650; }
+  #empty p { margin: 0 0 18px; color: var(--muted); line-height: 1.5; }
+  #empty code { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 12.5px; background: #e8eeec; padding: 1px 5px; border-radius: 4px; }
+  #mapWrap.dropping::after {
+    content: "Rilascia il file CSV per caricarlo"; position: absolute; inset: 10px; display: flex; align-items: center; justify-content: center;
+    border: 2px dashed var(--accent); border-radius: 12px; background: rgba(14,111,123,.08); color: var(--accent-2); font-weight: 650; font-size: 18px; pointer-events: none;
+  }
+  #hint { padding: 7px 16px; color: var(--muted); background: var(--panel); border-top: 1px solid var(--line); font-size: 13px; }
+
+  /* ---------- barra strumenti dei grafici ---------- */
+  .tbar { display: inline-flex; gap: 2px; padding: 3px; background: rgba(251,252,251,.94); border: 1px solid var(--line); border-radius: 8px; }
+  .tbar button {
+    width: 30px; height: 30px; display: grid; place-items: center; border: 0; background: transparent; border-radius: 6px; cursor: pointer; color: var(--ink-2);
+  }
+  .tbar button:hover:not(:disabled) { background: #e5ecea; }
+  .tbar button.on { background: var(--accent); color: #fff; }
+  .tbar button:disabled { opacity: .35; cursor: default; }
+  .tbar svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* ---------- finestre mobili ---------- */
+  #windows { position: fixed; inset: 0; pointer-events: none; z-index: 20; }
+  .win {
+    position: absolute; pointer-events: auto; display: flex; flex-direction: column;
+    background: var(--panel); border: 1px solid #b9c4c1; border-radius: 10px; overflow: hidden;
+    box-shadow: 0 20px 50px rgba(18,32,38,.30), 0 2px 8px rgba(18,32,38,.14);
+    resize: both; min-width: 420px; min-height: 340px; max-width: 100vw; max-height: 100vh;
+  }
+  .win.fixed { resize: none; min-width: 0; min-height: 0; }
+  .win-head {
+    display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 14px; background: var(--ink); color: #f2f6f5;
+    cursor: move; user-select: none; touch-action: none;
+  }
+  .win-head h3 { margin: 0; font-size: 13.5px; font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .win-x { width: 26px; height: 26px; border: 0; border-radius: 5px; background: transparent; color: #f2f6f5; cursor: pointer; display: grid; place-items: center; }
+  .win-x:hover { background: rgba(255,255,255,.16); }
+  .win-x svg { width: 14px; height: 14px; stroke: currentColor; stroke-width: 2; fill: none; stroke-linecap: round; }
+  .win-body { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 12px 14px 12px; gap: 10px; }
+  .info {
+    border: 1px solid var(--line); border-radius: var(--radius); background: #fff; padding: 8px 12px 6px; max-height: 34%; overflow: auto; flex: none;
+  }
+  .info h4 { margin: 0 0 4px; font-size: 12.5px; font-weight: 650; color: var(--ink-2); }
+  .info dl { margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); column-gap: 22px; }
+  .info .row { display: flex; justify-content: space-between; gap: 10px; padding: 3px 0; border-bottom: 1px solid var(--line-2); }
+  .info dt { color: var(--muted); font-size: 12.5px; }
+  .info dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; overflow-wrap: anywhere; }
+  .chart-box { position: relative; flex: 1; min-height: 160px; border: 1px solid var(--line); border-radius: var(--radius); background: #fff; overflow: hidden; }
+  .chart-box canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+  .chart-box canvas.dragging { cursor: grabbing; }
+  .chart-box canvas.zoom { cursor: crosshair; }
+  .chart-box .tbar { position: absolute; top: 6px; right: 8px; }
+  .chart-box .none { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); }
+  .win-hint { color: var(--muted); font-size: 12.5px; }
+  .win-foot { display: flex; justify-content: center; }
+  .pop-body { padding: 14px 16px 14px; display: block; }
+  .pop-body table { border-collapse: collapse; }
+  .pop-body td { padding: 3px 0; vertical-align: top; }
+  .pop-body td:first-child { padding-right: 16px; color: var(--muted); }
+  .pop-body td:last-child { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .pop-pid { font-weight: 650; margin-bottom: 8px; }
+  .pop-foot { display: flex; justify-content: center; margin-top: 12px; }
+
+  /* ---------- finestre di dialogo ---------- */
+  .overlay { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px; background: rgba(20,32,38,.42); }
+  .dialog { width: min(480px, 100%); background: var(--panel); border-radius: 12px; padding: 20px 22px 18px; box-shadow: 0 24px 60px rgba(10,20,25,.4); }
+  .dlg-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .dlg-head h2 { margin: 0; font-size: 16.5px; font-weight: 650; }
+  .dlg-ico { width: 26px; height: 26px; flex: none; }
+  .dlg-text { margin: 0 0 16px; white-space: pre-wrap; line-height: 1.5; color: var(--ink-2); overflow-wrap: anywhere; max-height: 50vh; overflow: auto; }
+  .dlg-actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .dialog input[type=text] { width: 100%; height: 36px; padding: 0 10px; border: 1px solid #b9c4c1; border-radius: var(--radius); background: #fff; margin-bottom: 14px; }
+  .progress { width: min(420px, 100%); background: var(--panel); border-radius: 12px; padding: 18px 20px 20px; }
+  .progress p { margin: 0 0 10px; overflow-wrap: anywhere; }
+  .bar { height: 8px; border-radius: 4px; background: #dfe6e4; overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .12s linear; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header id="topbar">
+    <div class="brand">
+      <svg width="34" height="22" viewBox="0 0 34 22" aria-hidden="true">
+        <circle cx="4" cy="16" r="3.2" fill="#d62f2f"/><circle cx="11" cy="9" r="3.2" fill="#f0a21c"/>
+        <circle cx="18" cy="15" r="3.2" fill="#7bd36b"/><circle cx="25" cy="7" r="3.2" fill="#2fb4d6"/>
+        <circle cx="31" cy="13" r="3.2" fill="#2a4fd0"/>
+      </svg>
+      <b>EGMS Viewer</b>
+    </div>
+    <div class="actions">
+      <button class="btn primary" id="btnLoad">Carica CSV EGMS…</button>
+      <button class="btn" id="btnKml" disabled>Esporta KML…</button>
+      <button class="btn" id="btnShp" disabled>Esporta Shapefile…</button>
+      <label class="switch"><input type="checkbox" id="chkBase" checked><span>Satellite sotto ai punti</span></label>
+    </div>
+    <div id="status">Nessun file caricato.</div>
+  </header>
+
+  <main id="mapWrap">
+    <canvas id="mapCanvas"></canvas>
+    <div id="mapTools"></div>
+    <div id="empty">
+      <div class="card">
+        <h2>Carica un CSV EGMS per visualizzare i punti</h2>
+        <p>Trascina qui il file oppure sceglilo dal computer. Servono le colonne <code>latitude</code>, <code>longitude</code> e <code>mean_velocity</code>; le colonne data in formato <code>AAAAMMGG</code> abilitano i grafici di dettaglio.</p>
+        <button class="btn primary" id="btnLoad2">Carica CSV EGMS…</button>
+      </div>
+    </div>
+  </main>
+
+  <footer id="hint">Rotella per zoomare, trascina per spostarti, clic su un punto per aprirne il dettaglio.</footer>
+</div>
+
+<input type="file" id="fileInput" accept=".csv,text/csv,text/plain" hidden>
+<div id="windows"></div>
+
+<script>
+'use strict';
+/* =====================================================================
+   EGMS Viewer - versione HTML/JavaScript
+   Traduzione fedele dell'applicazione desktop Python (Tkinter + matplotlib):
+   - carica un CSV EGMS L2b (tutto in locale, nel browser: nessun dato viene inviato)
+   - mappa dei punti colorati per mean_velocity (scala -10 rosso -> +10 blu, "jet_r")
+   - layer satellitare Esri World Imagery sotto ai punti (richiede internet)
+   - clic su un punto: finestra di dettaglio con serie temporale, regressione lineare e info
+   - export KML (+ pagina grafici interattivi) ed export Shapefile
+   ===================================================================== */
+
+/* ------------------------------------------------------------------ costanti */
+const DATE_COL_RE = /^\d{8}$/;
+
+// Colonne metadata "canoniche" EGMS L2b mostrate nel pannello informativo del punto.
+const INFO_FIELDS = [
+  ['pid', 'PID'],
+  ['mp_type', 'Tipo punto (mp_type)'],
+  ['latitude', 'Latitudine'],
+  ['longitude', 'Longitudine'],
+  ['height', 'Quota (m)'],
+  ['mean_velocity', 'Velocità media (mm/anno)'],
+  ['mean_velocity_std', 'Dev. std velocità (mm/anno)'],
+  ['acceleration', 'Accelerazione (mm/anno²)'],
+  ['acceleration_std', 'Dev. std accelerazione'],
+  ['seasonality', 'Stagionalità (mm)'],
+  ['seasonality_std', 'Dev. std stagionalità'],
+  ['temporal_coherence', 'Coerenza temporale'],
+  ['amplitude_dispersion', 'Dispersione ampiezza'],
+  ['rmse', 'RMSE'],
+  ['incidence_angle', 'Angolo di incidenza (°)'],
+  ['track_angle', 'Angolo di traccia (°)'],
+];
+
+// Valori che pandas interpreta come "mancante" nei CSV.
+const NA_SET = new Set(['', '#N/A', '#N/A N/A', '#NA', '-1.#IND', '-1.#QNAN', '-NaN', '-nan', '1.#IND',
+  '1.#QNAN', '<NA>', 'N/A', 'NA', 'NULL', 'NaN', 'None', 'n/a', 'nan', 'null']);
+const NUM_RE = /^\s*[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?\s*$/;
+const INT_RE = /^\s*[+-]?\d+\s*$/;
+
+const VMIN = -10, VMAX = 10;          // scala colori fissa, come nell'originale
+const INK = '#1d2c33', MUTED = '#5a6a72', GRID = 'rgba(29,44,51,.13)';
+
+/* ------------------------------------------------------------------ utilità */
+const $ = (s, r = document) => r.querySelector(s);
+function h(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  if (attrs) for (const k in attrs) {
+    const v = attrs[k];
+    if (k === 'class') e.className = v;
+    else if (k === 'text') e.textContent = v;
+    else if (k === 'html') e.innerHTML = v;
+    else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else e.setAttribute(k, v);
+  }
+  for (const c of kids.flat()) { if (c == null) continue; e.append(c.nodeType ? c : document.createTextNode(c)); }
+  return e;
+}
+const sleep0 = () => new Promise(r => setTimeout(r, 0));
+const escXml = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;').replace(/'/g, '&#x27;');
+const pad2 = n => String(n).padStart(2, '0');
+const fmtDateIT = ms => { const d = new Date(ms); return pad2(d.getUTCDate()) + '/' + pad2(d.getUTCMonth() + 1) + '/' + d.getUTCFullYear(); };
+const MONTHS_IT = ['gen', 'feb', 'mar', 'apr', 'mag', 'giu', 'lug', 'ago', 'set', 'ott', 'nov', 'dic'];
+const baseName = n => n.replace(/\.[^.]*$/, '');
+const safeName = n => n.replace(/[\\/:*?"<>|]+/g, '_').trim();
+function roundHalfEven(x) {
+  const r = Math.round(x);
+  return (Math.abs(x % 1) === 0.5 && r % 2 !== 0) ? r - 1 : r;
+}
+function pyFloatStr(v) { return Number.isInteger(v) ? v.toFixed(1) : String(v); }
+
+class UserError extends Error {
+  constructor(title, text, kind = 'error') { super(text); this.title = title; this.kind = kind; }
+}
+
+/* ------------------------------------------------------------------ colori: jet_r (come matplotlib) */
+const LUT = (() => {
+  // Replica esatta di matplotlib: LinearSegmentedColormap "jet" invertita (jet_r), N = 256
+  const N = 256;
+  const seg = {
+    r: [[0, 0], [0.35, 0], [0.66, 1], [0.89, 1], [1, 0.5]],
+    g: [[0, 0], [0.125, 0], [0.375, 1], [0.64, 1], [0.91, 0], [1, 0]],
+    b: [[0, 0.5], [0.11, 1], [0.34, 1], [0.65, 0], [1, 0]],
+  };
+  const reversed = pts => pts.slice().reverse().map(([x, y]) => [1.0 - x, y]);
+  const table = pts => {
+    const x = pts.map(q => q[0] * (N - 1)), y = pts.map(q => q[1]), lut = new Array(N), step = 1 / (N - 1);
+    lut[0] = y[0]; lut[N - 1] = y[y.length - 1];
+    for (let i = 1; i < N - 1; i++) {
+      const xi = (N - 1) * (i * step);
+      let k = 0; while (k < x.length && x[k] < xi) k++;
+      const d = (xi - x[k - 1]) / (x[k] - x[k - 1]);
+      lut[i] = d * (y[k] - y[k - 1]) + y[k - 1];
+    }
+    return lut.map(v => Math.min(1, Math.max(0, v)));
+  };
+  const R = table(reversed(seg.r)), G = table(reversed(seg.g)), B = table(reversed(seg.b));
+  return R.map((_, i) => [R[i], G[i], B[i]]);
+})();
+const LUT_CSS = LUT.map(c => `rgb(${Math.floor(c[0] * 255)},${Math.floor(c[1] * 255)},${Math.floor(c[2] * 255)})`);
+function cmapIndex(v) {
+  const t = (v - VMIN) / (VMAX - VMIN);
+  if (t < 0) return 0;
+  if (t >= 1) return 255;
+  return Math.min(255, Math.floor(t * 256));
+}
+function kmlColor(idx) {        // formato KML aabbggrr
+  const [r, g, b] = LUT[idx];
+  const x = v => roundHalfEven(v * 255).toString(16).padStart(2, '0');
+  return 'ff' + x(b) + x(g) + x(r);
+}
+
+/* ------------------------------------------------------------------ proiezione Web Mercator (EPSG:3857) */
+const MR = 6378137;
+const mercX = lon => MR * lon * Math.PI / 180;
+const mercY = lat => MR * Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360));
+const lonOf = x => x / MR * 180 / Math.PI;
+const latOf = y => (2 * Math.atan(Math.exp(y / MR)) - Math.PI / 2) * 180 / Math.PI;
+
+/* ------------------------------------------------------------------ stato applicazione */
+const S = {
+  loaded: false, fileName: '', n: 0,
+  info: [], infoByName: {}, pidCol: null,
+  dateCols: [], dates: [], T: 0, ts: null,
+  lon: null, lat: null, vel: null, mx: null, my: null,
+  vmin: 0, vmax: 0, order: null, bstart: null, bounds: null,
+};
+
+/* ------------------------------------------------------------------ dialoghi */
+const ICONS = {
+  info: '<svg class="dlg-ico" viewBox="0 0 24 24" fill="none" stroke="#0e6f7b" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.01"/></svg>',
+  warning: '<svg class="dlg-ico" viewBox="0 0 24 24" fill="none" stroke="#a9610a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18v.01"/></svg>',
+  error: '<svg class="dlg-ico" viewBox="0 0 24 24" fill="none" stroke="#b3382c" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg>',
+};
+function msgBox(kind, title, text) {
+  return new Promise(resolve => {
+    const ok = h('button', { class: 'btn primary', text: 'OK' });
+    const ov = h('div', { class: 'overlay' },
+      h('div', { class: 'dialog', role: 'dialog', 'aria-modal': 'true' },
+        h('div', { class: 'dlg-head', html: ICONS[kind] || ICONS.info }, h('h2', { text: title })),
+        h('p', { class: 'dlg-text', text }),
+        h('div', { class: 'dlg-actions' }, ok)));
+    const close = () => { document.removeEventListener('keydown', key, true); ov.remove(); resolve(); };
+    const key = e => { if (e.key === 'Escape' || e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); close(); } };
+    ok.addEventListener('click', close);
+    document.addEventListener('keydown', key, true);
+    document.body.append(ov); ok.focus();
+  });
+}
+function askFilename(title, note, defaultName, ext) {
+  return new Promise(resolve => {
+    const inp = h('input', { type: 'text', value: defaultName, 'aria-label': 'Nome del file' });
+    const ok = h('button', { class: 'btn primary', text: 'Esporta' });
+    const cancel = h('button', { class: 'btn', text: 'Annulla' });
+    const ov = h('div', { class: 'overlay' },
+      h('div', { class: 'dialog', role: 'dialog', 'aria-modal': 'true' },
+        h('div', { class: 'dlg-head', html: ICONS.info }, h('h2', { text: title })),
+        h('p', { class: 'dlg-text', text: note }),
+        inp,
+        h('div', { class: 'dlg-actions' }, cancel, ok)));
+    const done = v => { document.removeEventListener('keydown', key, true); ov.remove(); resolve(v); };
+    const key = e => {
+      if (e.key === 'Escape') { e.preventDefault(); done(null); }
+      else if (e.key === 'Enter') { e.preventDefault(); ok.click(); }
+    };
+    ok.addEventListener('click', () => {
+      const nm = safeName(baseName(inp.value)) || safeName(baseName(defaultName)) || 'egms';
+      done(nm);
+    });
+    cancel.addEventListener('click', () => done(null));
+    document.addEventListener('keydown', key, true);
+    document.body.append(ov); inp.focus(); inp.select();
+  });
+}
+let progressEl = null;
+function showProgress(text) {
+  hideProgress();
+  const fill = h('i');
+  progressEl = h('div', { class: 'overlay' }, h('div', { class: 'progress' }, h('p', { text }), h('div', { class: 'bar' }, fill)));
+  progressEl._fill = fill; progressEl._p = progressEl.querySelector('p');
+  document.body.append(progressEl);
+}
+function setProgress(frac, text) {
+  if (!progressEl) return;
+  progressEl._fill.style.width = Math.round(Math.min(1, Math.max(0, frac)) * 100) + '%';
+  if (text) progressEl._p.textContent = text;
+}
+function hideProgress() { if (progressEl) { progressEl.remove(); progressEl = null; } }
+
+function setStatus(t) { $('#status').textContent = t; $('#status').title = t; }
+
+/* =====================================================================
+   CARICAMENTO CSV
+   ===================================================================== */
+function splitQuoted(line) {           // parser CSV per righe con campi tra virgolette
+  const out = []; let cur = '', q = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q) {
+      if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; }
+      else cur += c;
+    } else if (c === '"') q = true;
+    else if (c === ',') { out.push(cur); cur = ''; }
+    else cur += c;
+  }
+  out.push(cur);
+  return out;
+}
+function countQuotes(s) { let n = 0; for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) === 34) n++; return n; }
+const numCell = s => (s === undefined || s === '') ? NaN : +s;
+
+async function parseCsv(file, onProgress) {
+  const reader = file.stream().getReader();
+  const dec = new TextDecoder('utf-8');
+  const total = file.size || 1;
+  let read = 0, carry = '', pending = null, header = null;
+  let iLat, iLon, iVel, tsIdx = [], T = 0, cap = 0, ts = null, n = 0;
+  const lonA = [], latA = [], velA = [];
+  let cols = [];                         // colonne informative (esclusi lat/lon/vel, tenuti negli array dedicati)
+  let dateNames = [];
+
+  const initHeader = names => {
+    const idx = new Map(); names.forEach((nm, i) => { if (!idx.has(nm)) idx.set(nm, i); });
+    const required = ['latitude', 'longitude', 'mean_velocity'];
+    const missing = required.filter(r => !idx.has(r)).sort();
+    if (missing.length) throw new UserError('Formato non riconosciuto', 'Mancano le colonne richieste nel CSV: ' + missing.join(', '));
+    iLat = idx.get('latitude'); iLon = idx.get('longitude'); iVel = idx.get('mean_velocity');
+    dateNames = names.filter(c => DATE_COL_RE.test(c)).sort();
+    for (const d of dateNames) {
+      const y = +d.slice(0, 4), m = +d.slice(4, 6), dd = +d.slice(6, 8);
+      const dt = new Date(Date.UTC(y, m - 1, dd));
+      if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== dd)
+        throw new UserError('Errore di lettura', `Impossibile leggere il file:\nLa colonna "${d}" non è una data valida (AAAAMMGG).`);
+    }
+    tsIdx = dateNames.map(d => idx.get(d)); T = tsIdx.length;
+    cap = 4096; ts = new Float64Array(cap * Math.max(T, 1));
+    for (const [name, label] of INFO_FIELDS) {
+      if (!idx.has(name)) continue;
+      const c = { name, label, idx: idx.get(name), vals: [], str: (name === 'pid' || name === 'mp_type'), allInt: true, hasNA: false, arr: null };
+      cols.push(c);
+    }
+  };
+
+  const processRow = f => {
+    lonA.push(numCell(f[iLon])); latA.push(numCell(f[iLat])); velA.push(numCell(f[iVel]));
+    for (let k = 0; k < cols.length; k++) {
+      const c = cols[k];
+      if (c.name === 'latitude' || c.name === 'longitude' || c.name === 'mean_velocity') continue;
+      const s = f[c.idx];
+      if (c.str) { c.vals.push(s === undefined || NA_SET.has(s) ? null : s); continue; }
+      if (s === undefined || NA_SET.has(s)) { c.vals.push(NaN); c.hasNA = true; continue; }
+      const nv = +s;
+      if (nv === nv && NUM_RE.test(s)) { c.vals.push(nv); if (c.allInt && !INT_RE.test(s)) c.allInt = false; }
+      else { c.str = true; c.vals = c.vals.map(v => (v !== v ? null : String(v))); c.vals.push(s); }
+    }
+    if (T) {
+      if (n >= cap) { cap *= 2; const nt = new Float64Array(cap * T); nt.set(ts); ts = nt; }
+      const base = n * T;
+      for (let j = 0; j < T; j++) { const s = f[tsIdx[j]]; ts[base + j] = (s === undefined || s === '') ? NaN : +s; }
+    }
+    n++;
+  };
+
+  const handle = raw => {
+    let line = raw.charCodeAt(raw.length - 1) === 13 ? raw.slice(0, -1) : raw;
+    if (pending !== null) {
+      pending += '\n' + line;
+      if (countQuotes(pending) % 2 === 0) { line = pending; pending = null; } else return;
+    } else if (line.indexOf('"') !== -1 && countQuotes(line) % 2 === 1) { pending = line; return; }
+    if (line.length === 0) return;
+    const f = line.indexOf('"') === -1 ? line.split(',') : splitQuoted(line);
+    if (!header) { header = f; initHeader(f); } else processRow(f);
+  };
+
+  let lastYield = performance.now();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      carry += done ? dec.decode() : dec.decode(value, { stream: true });
+      if (!done) read += value.byteLength;
+      let start = 0, nl;
+      while ((nl = carry.indexOf('\n', start)) !== -1) { handle(carry.slice(start, nl)); start = nl + 1; }
+      carry = carry.slice(start);
+      if (done) { if (carry.length) handle(carry); break; }
+      if (performance.now() - lastYield > 40) { onProgress(read / total); await sleep0(); lastYield = performance.now(); }
+    }
+  } catch (e) { try { reader.cancel(); } catch (_) { /* ignore */ } throw e; }
+
+  if (!header) throw new UserError('Errore di lettura', 'Impossibile leggere il file:\nNessuna colonna da leggere (file vuoto).');
+  if (n === 0) throw new UserError('Errore di lettura', 'Impossibile leggere il file:\nIl CSV non contiene nessun punto.');
+
+  // colonne informative: tipo (int / float / str) come farebbe pandas
+  const lon = Float64Array.from(lonA), lat = Float64Array.from(latA), vel = Float64Array.from(velA);
+  const info = [];
+  for (const c of cols) {
+    let kind, get;
+    if (c.name === 'latitude') { kind = 'float'; get = i => lat[i]; }
+    else if (c.name === 'longitude') { kind = 'float'; get = i => lon[i]; }
+    else if (c.name === 'mean_velocity') { kind = 'float'; get = i => vel[i]; }
+    else {
+      kind = c.str ? 'str' : (c.allInt && !c.hasNA ? 'int' : 'float');
+      const vals = c.vals; get = i => vals[i];
+    }
+    info.push({ name: c.name, label: c.label, kind, get });
+  }
+  return { n, lon, lat, vel, info, dateNames, T, ts: ts.subarray(0, n * T) };
+}
+
+function ingest(data, file) {
+  S.n = data.n; S.lon = data.lon; S.lat = data.lat; S.vel = data.vel;
+  S.info = data.info; S.infoByName = {}; data.info.forEach(c => { S.infoByName[c.name] = c; });
+  S.pidCol = S.infoByName.pid || null;
+  S.dateCols = data.dateNames; T_set(data.T);
+  S.dates = data.dateNames.map(d => Date.UTC(+d.slice(0, 4), +d.slice(4, 6) - 1, +d.slice(6, 8)));
+  S.ts = data.ts; S.fileName = file.name;
+
+  const n = S.n;
+  S.mx = new Float64Array(n); S.my = new Float64Array(n);
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, vmin = Infinity, vmax = -Infinity;
+  const cidx = new Int16Array(n); const counts = new Int32Array(257);
+  for (let i = 0; i < n; i++) {
+    const x = mercX(S.lon[i]), y = mercY(S.lat[i]);
+    S.mx[i] = x; S.my[i] = y;
+    if (x === x && y === y && isFinite(x) && isFinite(y)) {
+      if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y;
+    }
+    const v = S.vel[i];
+    if (v === v) { if (v < vmin) vmin = v; if (v > vmax) vmax = v; const ci = cmapIndex(v); cidx[i] = ci; counts[ci + 1]++; }
+    else cidx[i] = -1;
+  }
+  for (let i = 0; i < 256; i++) counts[i + 1] += counts[i];
+  const fill = counts.slice(0, 256); S.order = new Int32Array(counts[256]);
+  for (let i = 0; i < n; i++) if (cidx[i] >= 0) S.order[fill[cidx[i]]++] = i;
+  S.bstart = counts;
+  S.vmin = vmin; S.vmax = vmax;
+  S.bounds = isFinite(minX) ? { minX, maxX, minY, maxY } : { minX: 0, maxX: 1, minY: 0, maxY: 1 };
+  S.loaded = true;
+}
+function T_set(t) { S.T = t; }
+
+async function loadFile(file) {
+  if (!file) return;
+  showProgress(`Lettura di ${file.name}…`);
+  let data;
+  try {
+    data = await parseCsv(file, f => setProgress(f));
+    if (!data.dateNames.length) {
+      hideProgress();
+      await msgBox('warning', 'Serie temporale assente',
+        'Non ho trovato colonne data (formato AAAAMMGG) nel CSV.\nVerrà mostrata solo la mappa, senza grafico di dettaglio.');
+      showProgress('Preparazione della mappa…');
+    }
+    setProgress(1, 'Preparazione della mappa…');
+    await sleep0();
+    ingest(data, file);
+  } catch (err) {
+    hideProgress();
+    if (err instanceof UserError) await msgBox(err.kind, err.title, err.text);
+    else if (err instanceof RangeError) await msgBox('error', 'File troppo grande',
+      'Il browser non ha abbastanza memoria per caricare tutti i punti e le serie temporali di questo CSV.\nProva con un file più piccolo (ad esempio ritagliando l\'area di interesse) oppure chiudi altre schede e riprova.');
+    else await msgBox('error', 'Errore di lettura', 'Impossibile leggere il file:\n' + (err && err.message ? err.message : err));
+    return;
+  }
+  hideProgress();
+  base.ok = 0; base.err = 0; base.warned = false;
+  setStatus(statsStatus());
+  $('#btnKml').disabled = false; $('#btnShp').disabled = false;
+  $('#empty').style.display = 'none'; $('#mapTools').style.display = 'block';
+  map.fit(); map.draw();
+}
+const statsStatus = () =>
+  `${S.n} punti caricati - velocità media min ${S.vmin.toFixed(1)} / max ${S.vmax.toFixed(1)} mm/anno`;
+
+/* =====================================================================
+   INTERAZIONE GENERICA (zoom con rotella, pan, clic, zoom ad area, cronologia viste)
+   ===================================================================== */
+const ICON = {
+  home: '<svg viewBox="0 0 24 24"><path d="M3 11l9-8 9 8M5.5 9.5V20h4.5v-6h4v6h4.5V9.5"/></svg>',
+  back: '<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>',
+  fwd: '<svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>',
+  zoom: '<svg viewBox="0 0 24 24"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" stroke-dasharray="0"/><circle cx="12" cy="12" r="2.2"/></svg>',
+  save: '<svg viewBox="0 0 24 24"><path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/></svg>',
+  close: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+};
+function prepCanvas(canvas) {
+  const r = canvas.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  const w = Math.max(1, Math.round(r.width * dpr)), hh = Math.max(1, Math.round(r.height * dpr));
+  if (canvas.width !== w || canvas.height !== hh) { canvas.width = w; canvas.height = hh; }
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, W: r.width, H: r.height };
+}
+
+class Interactor {
+  /* o: plot() -> {x,y,w,h}; lims() -> {x0,x1,y0,y1}; setLims(l); snapshot(); restore(s); pick(px,py);
+        changed(); fitRect(l) (opzionale); dblHome (bool) */
+  constructor(canvas, o) {
+    this.c = canvas; this.o = o; this.mode = null; this.drag = null; this.rect = null;
+    this.hist = []; this.hpos = -1; this.home = null; this.wheelTimer = null; this.listeners = [];
+    canvas.addEventListener('wheel', e => this.onWheel(e), { passive: false });
+    canvas.addEventListener('pointerdown', e => this.onDown(e));
+    canvas.addEventListener('pointermove', e => this.onMove(e));
+    canvas.addEventListener('pointerup', e => this.onUp(e));
+    canvas.addEventListener('pointercancel', () => { this.drag = null; this.rect = null; canvas.classList.remove('dragging'); this.o.changed(); });
+  }
+  pos(e) { const r = this.c.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
+  inPlot(p) { const P = this.o.plot(); return p.x >= P.x && p.x <= P.x + P.w && p.y >= P.y && p.y <= P.y + P.h; }
+  reset(home) { this.home = home; this.hist = [home]; this.hpos = 0; this.notify(); }
+  push() {
+    const s = this.o.snapshot();
+    this.hist = this.hist.slice(0, this.hpos + 1); this.hist.push(s); this.hpos = this.hist.length - 1; this.notify();
+  }
+  goHome() { if (!this.home) return; this.o.restore(this.home); this.push(); this.o.changed(); }
+  back() { if (this.hpos > 0) { this.hpos--; this.o.restore(this.hist[this.hpos]); this.notify(); this.o.changed(); } }
+  forward() { if (this.hpos < this.hist.length - 1) { this.hpos++; this.o.restore(this.hist[this.hpos]); this.notify(); this.o.changed(); } }
+  notify() { this.listeners.forEach(f => f()); }
+  setMode(m) {
+    this.mode = m; this.c.classList.toggle('zoom', m === 'zoom'); this.notify();
+  }
+  onWheel(e) {
+    const p = this.pos(e);
+    if (!this.o.hasData() || !this.inPlot(p)) return;
+    e.preventDefault();
+    const P = this.o.plot(), L = this.o.lims();
+    let dy = e.deltaY; if (e.deltaMode === 1) dy *= 33; else if (e.deltaMode === 2) dy *= 400;
+    const scale = Math.pow(1.25, Math.max(-3, Math.min(3, dy / 100)));       // rotella su = zoom avanti
+    const xd = L.x0 + (p.x - P.x) / P.w * (L.x1 - L.x0);
+    const yd = L.y1 - (p.y - P.y) / P.h * (L.y1 - L.y0);
+    const nw = (L.x1 - L.x0) * scale, nh = (L.y1 - L.y0) * scale;
+    const relx = (L.x1 - xd) / (L.x1 - L.x0), rely = (L.y1 - yd) / (L.y1 - L.y0);
+    this.o.setLims({ x0: xd - nw * (1 - relx), x1: xd + nw * relx, y0: yd - nh * (1 - rely), y1: yd + nh * rely });
+    this.o.changed();
+    clearTimeout(this.wheelTimer); this.wheelTimer = setTimeout(() => this.push(), 350);
+  }
+  onDown(e) {
+    if (e.button !== 0 || !this.o.hasData()) return;
+    const p = this.pos(e);
+    if (!this.inPlot(p)) return;
+    if (this.o.dblHome && e.detail === 2) { this.goHome(); return; }
+    try { this.c.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+    this.drag = { p0: p, lims: this.o.lims(), moved: false };
+  }
+  onMove(e) {
+    const d = this.drag; if (!d) return;
+    const p = this.pos(e);
+    if (!d.moved && Math.hypot(p.x - d.p0.x, p.y - d.p0.y) > 4) { d.moved = true; if (this.mode !== 'zoom') this.c.classList.add('dragging'); }
+    if (!d.moved) return;
+    if (this.mode === 'zoom') {
+      const P = this.o.plot();
+      const cl = v => Math.min(Math.max(v, 0), 1);
+      const ax = P.x + cl((d.p0.x - P.x) / P.w) * P.w, ay = P.y + cl((d.p0.y - P.y) / P.h) * P.h;
+      const bx = P.x + cl((p.x - P.x) / P.w) * P.w, by = P.y + cl((p.y - P.y) / P.h) * P.h;
+      this.rect = { x: Math.min(ax, bx), y: Math.min(ay, by), w: Math.abs(ax - bx), h: Math.abs(ay - by) };
+      this.o.changed();
+    } else {
+      const P = this.o.plot(), L = d.lims;
+      const dx = (p.x - d.p0.x) / P.w * (L.x1 - L.x0), dyy = (p.y - d.p0.y) / P.h * (L.y1 - L.y0);
+      this.o.setLims({ x0: L.x0 - dx, x1: L.x1 - dx, y0: L.y0 + dyy, y1: L.y1 + dyy });
+      this.o.changed();
+    }
+  }
+  onUp(e) {
+    const d = this.drag; if (!d) return;
+    this.drag = null; this.c.classList.remove('dragging');
+    try { this.c.releasePointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+    if (!d.moved) { if (!this.mode && this.o.pick) this.o.pick(d.p0.x, d.p0.y); return; }
+    if (this.mode === 'zoom' && this.rect) {
+      const P = this.o.plot(), L = d.lims, r = this.rect; this.rect = null;
+      if (r.w > 5 && r.h > 5) {
+        const fx = v => L.x0 + (v - P.x) / P.w * (L.x1 - L.x0), fy = v => L.y1 - (v - P.y) / P.h * (L.y1 - L.y0);
+        const nl = { x0: fx(r.x), x1: fx(r.x + r.w), y0: fy(r.y + r.h), y1: fy(r.y) };
+        if (this.o.fitRect) this.o.fitRect(nl); else this.o.setLims(nl);
+        this.push();
+      }
+      this.o.changed();
+    } else this.push();
+  }
+  drawOverlay(ctx) {     // rettangolo dello zoom ad area
+    if (!this.rect) return;
+    ctx.save(); ctx.fillStyle = 'rgba(14,111,123,.12)'; ctx.strokeStyle = '#0e6f7b'; ctx.lineWidth = 1.2; ctx.setLineDash([5, 3]);
+    ctx.fillRect(this.rect.x, this.rect.y, this.rect.w, this.rect.h); ctx.strokeRect(this.rect.x, this.rect.y, this.rect.w, this.rect.h);
+    ctx.restore();
+  }
+}
+function makeToolbar(it, onSave) {
+  const bHome = h('button', { title: 'Vista iniziale', 'aria-label': 'Vista iniziale', html: ICON.home, onclick: () => it.goHome() });
+  const bBack = h('button', { title: 'Vista precedente', 'aria-label': 'Vista precedente', html: ICON.back, onclick: () => it.back() });
+  const bFwd = h('button', { title: 'Vista successiva', 'aria-label': 'Vista successiva', html: ICON.fwd, onclick: () => it.forward() });
+  const bZoom = h('button', { title: 'Zoom su un\'area (trascina un rettangolo)', 'aria-label': 'Zoom su un\'area', html: ICON.zoom, onclick: () => it.setMode(it.mode === 'zoom' ? null : 'zoom') });
+  const bSave = h('button', { title: 'Salva immagine PNG', 'aria-label': 'Salva immagine PNG', html: ICON.save, onclick: onSave });
+  const bar = h('div', { class: 'tbar' }, bHome, bBack, bFwd, bZoom, bSave);
+  const upd = () => { bBack.disabled = it.hpos <= 0; bFwd.disabled = it.hpos >= it.hist.length - 1; bZoom.classList.toggle('on', it.mode === 'zoom'); };
+  it.listeners.push(upd); upd();
+  return bar;
+}
+function downloadBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = h('a', { href: url, download: name });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+/* ---- scale "belle" per gli assi ---- */
+function niceStep(raw) {
+  const p = Math.pow(10, Math.floor(Math.log10(raw))), m = raw / p;
+  return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * p;
+}
+function numTicks(a, b, target) {
+  const step = niceStep((b - a) / Math.max(2, target)), out = [];
+  for (let k = Math.ceil(a / step - 1e-9); k * step <= b + step * 1e-9; k++) out.push(k * step);
+  return { ticks: out, step };
+}
+const decimalsFor = step => Math.max(0, Math.ceil(-Math.log10(step) - 1e-9));
+
+/* =====================================================================
+   MAPPA
+   ===================================================================== */
+const base = { ok: 0, err: 0, warned: false, timer: null };
+const basemapOn = () => $('#chkBase').checked;
+const TILE_WORLD = 40075016.68557849, TILE_ORIGIN = TILE_WORLD / 2;
+const tiles = new Map();
+const TILE_URL = (z, x, y) => `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`;
+const ATTRIBUTION = 'Tiles © Esri -- Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community';
+
+function noteTile(ok) {
+  if (ok) { base.ok++; if (base.ok === 1 && S.loaded) setStatus(`${S.n} punti caricati - layer satellitare attivo`); return; }
+  base.err++;
+  if (base.ok === 0 && !base.warned) {
+    clearTimeout(base.timer);
+    base.timer = setTimeout(() => {
+      if (base.ok === 0 && base.err > 0 && !base.warned && basemapOn() && S.loaded) {
+        base.warned = true;
+        setStatus(`${S.n} punti caricati - basemap NON caricata (vedi errore)`);
+        msgBox('error', 'Basemap satellitare non disponibile',
+          'Non sono riuscito a scaricare/disegnare il layer satellitare.\n\n' +
+          'Cause più comuni: nessuna connessione internet, oppure un firewall/proxy che blocca i tile Esri.');
+      }
+    }, 1200);
+  }
+}
+function startTile(t, url, cors) {
+  const im = new Image();
+  if (cors) im.crossOrigin = 'anonymous';
+  im.onload = () => { t.img = im; t.ok = true; t.tainted = !cors; noteTile(true); map.schedule(); };
+  im.onerror = () => { if (cors) startTile(t, url, false); else { t.err = true; noteTile(false); } };
+  im.src = url;
+}
+function getTile(z, x, y, create) {
+  const key = z + '/' + x + '/' + y;
+  let t = tiles.get(key);
+  if (!t && create) {
+    if (tiles.size > 900) { let k = 0; for (const kk of tiles.keys()) { tiles.delete(kk); if (++k > 250) break; } }
+    t = { img: null, ok: false, err: false, tainted: false };
+    tiles.set(key, t);
+    startTile(t, TILE_URL(z, x, y), true);
+  }
+  return t;
+}
+
+const map = {
+  canvas: $('#mapCanvas'), cx: 0, cy: 0, mpp: 1, raf: 0, noBase: false, usedTainted: false,
+  plot(W, H) {
+    if (W === undefined) { const r = this.canvas.getBoundingClientRect(); W = r.width; H = r.height; }
+    const small = W < 640, l = small ? 56 : 84, r = small ? 74 : 118, t = 52, b = 54;
+    return { x: l, y: t, w: Math.max(50, W - l - r), h: Math.max(50, H - t - b) };
+  },
+  lims() {
+    const P = this.plot(), hw = P.w / 2 * this.mpp, hh = P.h / 2 * this.mpp;
+    return { x0: this.cx - hw, x1: this.cx + hw, y0: this.cy - hh, y1: this.cy + hh };
+  },
+  clampMpp(m) { return Math.min(Math.max(m, 0.02), 2e6); },
+  setLims(l) { this.mpp = this.clampMpp((l.x1 - l.x0) / this.plot().w); this.cx = (l.x0 + l.x1) / 2; this.cy = (l.y0 + l.y1) / 2; },
+  fitRect(l) {
+    const P = this.plot();
+    this.mpp = this.clampMpp(Math.max((l.x1 - l.x0) / P.w, (l.y1 - l.y0) / P.h));
+    this.cx = (l.x0 + l.x1) / 2; this.cy = (l.y0 + l.y1) / 2;
+  },
+  fit() {
+    const P = this.plot(), B = S.bounds;
+    const w = Math.max(B.maxX - B.minX, 50), hh = Math.max(B.maxY - B.minY, 50);
+    this.mpp = this.clampMpp(Math.max(w / P.w, hh / P.h) * 1.1);
+    this.cx = (B.minX + B.maxX) / 2; this.cy = (B.minY + B.maxY) / 2;
+    this.it.reset(this.snapshot());
+  },
+  snapshot() { return { cx: this.cx, cy: this.cy, mpp: this.mpp }; },
+  restore(s) { this.cx = s.cx; this.cy = s.cy; this.mpp = s.mpp; },
+  schedule() { if (!this.raf) this.raf = requestAnimationFrame(() => { this.raf = 0; this.draw(); }); },
+  pick(px, py) {
+    if (!S.loaded) return;
+    const P = this.plot(), mpp = this.mpp, ox = P.x + P.w / 2 - this.cx / mpp, oy = P.y + P.h / 2 + this.cy / mpp;
+    let best = -1, bd = Infinity;
+    for (let i = 0; i < S.n; i++) {
+      const dx = ox + S.mx[i] / mpp - px, dy = oy - S.my[i] / mpp - py, d = dx * dx + dy * dy;
+      if (d < bd) { bd = d; best = i; }
+    }
+    if (best >= 0 && Math.sqrt(bd) <= 12) openDetail(best);      // soglia di 12 pixel, come nell'originale
+  },
+
+  draw() {
+    const { ctx, W, H } = prepCanvas(this.canvas);
+    ctx.fillStyle = '#f6f8f7'; ctx.fillRect(0, 0, W, H);
+    if (!S.loaded) return;
+    const P = this.plot(W, H), mpp = this.mpp, L = this.lims();
+    const toX = x => P.x + P.w / 2 + (x - this.cx) / mpp, toY = y => P.y + P.h / 2 - (y - this.cy) / mpp;
+    const useBase = basemapOn() && !this.noBase;
+
+    // titolo
+    ctx.fillStyle = INK; ctx.font = '600 14px ' + getComputedStyle(document.body).fontFamily;
+    ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+    ctx.fillText(`Velocità media di spostamento - min: ${S.vmin.toFixed(2)} mm/anno | max: ${S.vmax.toFixed(2)} mm/anno`, P.x, 26, Math.max(120, W - P.x - 210));
+
+    // riquadro mappa
+    ctx.save(); ctx.beginPath(); ctx.rect(P.x, P.y, P.w, P.h); ctx.clip();
+    ctx.fillStyle = '#eaeeec'; ctx.fillRect(P.x, P.y, P.w, P.h);
+    if (useBase) this.drawBasemap(ctx, P, L, mpp, toX, toY);
+
+    // reticolo lon/lat (solo senza satellite)
+    const lon0 = lonOf(L.x0), lon1 = lonOf(L.x1), lat0 = latOf(L.y0), lat1 = latOf(L.y1);
+    const tx = numTicks(lon0, lon1, P.w / 130), ty = numTicks(lat0, lat1, P.h / 85);
+    if (!useBase) {
+      ctx.strokeStyle = GRID; ctx.lineWidth = 1; ctx.beginPath();
+      for (const v of tx.ticks) { const x = Math.round(toX(mercX(v))) + .5; ctx.moveTo(x, P.y); ctx.lineTo(x, P.y + P.h); }
+      for (const v of ty.ticks) { const y = Math.round(toY(mercY(v))) + .5; ctx.moveTo(P.x, y); ctx.lineTo(P.x + P.w, y); }
+      ctx.stroke();
+    }
+
+    // punti (colore = mean_velocity)
+    const order = S.order, bs = S.bstart, mx = S.mx, my = S.my, inv = 1 / mpp;
+    const ox = P.x + P.w / 2 - this.cx * inv, oy = P.y + P.h / 2 + this.cy * inv;
+    const xa = P.x - 6, xb = P.x + P.w + 6, ya = P.y - 6, yb = P.y + P.h + 6;
+    let dense = false;
+    if (S.n > 120000) {
+      let vis = 0;
+      for (let i = 0; i < S.n; i += 3) { const px = ox + mx[i] * inv, py = oy - my[i] * inv; if (px >= xa && px <= xb && py >= ya && py <= yb) vis++; }
+      dense = vis * 3 > 150000;
+    }
+    const r = 2.7;
+    for (let b = 0; b < 256; b++) {
+      const a0 = bs[b], a1 = bs[b + 1]; if (a0 === a1) continue;
+      ctx.fillStyle = LUT_CSS[b];
+      if (dense) {
+        for (let k = a0; k < a1; k++) { const i = order[k], px = ox + mx[i] * inv, py = oy - my[i] * inv; if (px >= xa && px <= xb && py >= ya && py <= yb) ctx.fillRect(px - 1.6, py - 1.6, 3.2, 3.2); }
+      } else {
+        ctx.beginPath();
+        for (let k = a0; k < a1; k++) {
+          const i = order[k], px = ox + mx[i] * inv, py = oy - my[i] * inv;
+          if (px >= xa && px <= xb && py >= ya && py <= yb) { ctx.moveTo(px + r, py); ctx.arc(px, py, r, 0, 6.2832); }
+        }
+        ctx.fill();
+      }
+    }
+    if (useBase) {          // attribuzione dei tile
+      ctx.font = '10.5px ' + getComputedStyle(document.body).fontFamily;
+      const tw = ctx.measureText(ATTRIBUTION).width + 12;
+      ctx.fillStyle = 'rgba(255,255,255,.72)'; ctx.fillRect(P.x + P.w - tw, P.y + P.h - 17, tw, 17);
+      ctx.fillStyle = '#34444c'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.fillText(ATTRIBUTION, P.x + P.w - 6, P.y + P.h - 8);
+    }
+    this.it.drawOverlay(ctx);
+    ctx.restore();
+
+    // cornice e tick lon/lat
+    ctx.strokeStyle = '#7f8e8b'; ctx.lineWidth = 1; ctx.strokeRect(P.x + .5, P.y + .5, P.w - 1, P.h - 1);
+    ctx.fillStyle = MUTED; ctx.font = '11.5px ' + getComputedStyle(document.body).fontFamily; ctx.strokeStyle = '#7f8e8b';
+    const dX = Math.max(2, decimalsFor(tx.step)), dY = Math.max(2, decimalsFor(ty.step));
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    for (const v of tx.ticks) {
+      const x = toX(mercX(v)); if (x < P.x || x > P.x + P.w) continue;
+      ctx.beginPath(); ctx.moveTo(x + .5, P.y + P.h); ctx.lineTo(x + .5, P.y + P.h + 4); ctx.stroke();
+      ctx.fillText(v.toFixed(dX), x, P.y + P.h + 8);
+    }
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    for (const v of ty.ticks) {
+      const y = toY(mercY(v)); if (y < P.y || y > P.y + P.h) continue;
+      ctx.beginPath(); ctx.moveTo(P.x - 4, y + .5); ctx.lineTo(P.x, y + .5); ctx.stroke();
+      ctx.fillText(v.toFixed(dY), P.x - 8, y);
+    }
+    ctx.fillStyle = INK; ctx.font = '12.5px ' + getComputedStyle(document.body).fontFamily;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic'; ctx.fillText('Longitudine', P.x + P.w / 2, H - 8);
+    ctx.save(); ctx.translate(15, P.y + P.h / 2); ctx.rotate(-Math.PI / 2); ctx.fillText('Latitudine', 0, 0); ctx.restore();
+
+    this.drawColorbar(ctx, P, W, H);
+  },
+
+  drawColorbar(ctx, P, W, H) {
+    const small = W < 640;
+    const bx = P.x + P.w + (small ? 12 : 26), bw = 16, tri = 11;
+    const top = P.y + tri, bot = P.y + P.h - tri, bh = bot - top;
+    for (let y = 0; y < bh; y++) {         // gradiente: alto = +10 (blu), basso = -10 (rosso)
+      const v = VMAX - (y + .5) / bh * (VMAX - VMIN);
+      ctx.fillStyle = LUT_CSS[cmapIndex(v)]; ctx.fillRect(bx, top + y, bw, 1.4);
+    }
+    ctx.fillStyle = LUT_CSS[255]; ctx.beginPath(); ctx.moveTo(bx, top); ctx.lineTo(bx + bw, top); ctx.lineTo(bx + bw / 2, P.y); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = LUT_CSS[0]; ctx.beginPath(); ctx.moveTo(bx, bot); ctx.lineTo(bx + bw, bot); ctx.lineTo(bx + bw / 2, P.y + P.h); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#7f8e8b'; ctx.lineWidth = 1; ctx.strokeRect(bx + .5, top + .5, bw - 1, bh - 1);
+    ctx.fillStyle = MUTED; ctx.font = '11.5px ' + getComputedStyle(document.body).fontFamily; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    for (let v = VMIN; v <= VMAX + 1e-9; v += 2.5) {
+      const y = top + (VMAX - v) / (VMAX - VMIN) * bh;
+      ctx.strokeStyle = '#7f8e8b'; ctx.beginPath(); ctx.moveTo(bx + bw, y + .5); ctx.lineTo(bx + bw + 4, y + .5); ctx.stroke();
+      ctx.fillText(Number.isInteger(v) ? String(v) : v.toFixed(1), bx + bw + 7, y);
+    }
+    if (!small) {
+      ctx.fillStyle = INK; ctx.font = '12.5px ' + getComputedStyle(document.body).fontFamily; ctx.textAlign = 'center';
+      ctx.save(); ctx.translate(W - 14, P.y + P.h / 2); ctx.rotate(Math.PI / 2);
+      ctx.fillText('Velocità media di spostamento (mm/anno)', 0, 0, Math.max(100, P.h)); ctx.restore();
+    }
+  },
+
+  drawBasemap(ctx, P, L, mpp, toX, toY) {
+    // livello di zoom dei tile: la risoluzione del tile deve essere <= a quella dello schermo
+    let z = Math.ceil(Math.log2(156543.03392804097 / mpp));
+    z = Math.max(0, Math.min(19, z));
+    const n = Math.pow(2, z), ts = TILE_WORLD / n;
+    const x0 = Math.max(0, Math.floor((L.x0 + TILE_ORIGIN) / ts)), x1 = Math.min(n - 1, Math.floor((L.x1 + TILE_ORIGIN) / ts));
+    const y0 = Math.max(0, Math.floor((TILE_ORIGIN - L.y1) / ts)), y1 = Math.min(n - 1, Math.floor((TILE_ORIGIN - L.y0) / ts));
+    if ((x1 - x0 + 1) * (y1 - y0 + 1) > 120) return;
+    for (let ty = y0; ty <= y1; ty++) for (let tx = x0; tx <= x1; tx++) {
+      const l = tx * ts - TILE_ORIGIN, t = TILE_ORIGIN - ty * ts;
+      const dx = Math.floor(toX(l)), dy = Math.floor(toY(t)), dw = Math.ceil(toX(l + ts)) - dx, dh = Math.ceil(toY(t - ts)) - dy;
+      const tile = getTile(z, tx, ty, true);
+      if (tile && tile.ok) { ctx.drawImage(tile.img, dx, dy, dw, dh); if (tile.tainted) this.usedTainted = true; if (!base.ok) noteTile(true); continue; }
+      for (let k = 1; k <= 3 && z - k >= 0; k++) {          // tile a zoom inferiore come anteprima sfocata
+        const pt = getTile(z - k, tx >> k, ty >> k, false);
+        if (pt && pt.ok) {
+          const ss = 256 / (1 << k), sx = (tx - ((tx >> k) << k)) * ss, sy = (ty - ((ty >> k) << k)) * ss;
+          ctx.drawImage(pt.img, sx, sy, ss, ss, dx, dy, dw, dh); if (pt.tainted) this.usedTainted = true; break;
+        }
+      }
+    }
+  },
+
+  save() {
+    const c = this.canvas;
+    this.usedTainted = false; this.noBase = false; this.draw();
+    const fin = blob => downloadBlob(blob, 'egms_mappa.png');
+    try { c.toBlob(b => b && fin(b), 'image/png'); }
+    catch (e) {
+      // canvas "contaminato" dai tile senza CORS: salvo la mappa senza satellite
+      this.noBase = true; this.draw();
+      c.toBlob(b => { this.noBase = false; this.draw(); if (b) fin(b); }, 'image/png');
+      msgBox('warning', 'Immagine salvata senza satellite', 'Il server dei tile non consente di includere il layer satellitare nell\'immagine: è stata salvata la sola mappa dei punti.');
+    }
+  },
+};
+map.it = new Interactor(map.canvas, {
+  plot: () => map.plot(), lims: () => map.lims(), setLims: l => map.setLims(l), fitRect: l => map.fitRect(l),
+  snapshot: () => map.snapshot(), restore: s => map.restore(s), pick: (x, y) => map.pick(x, y),
+  changed: () => map.schedule(), hasData: () => S.loaded, dblHome: false,
+});
+$('#mapTools').append(makeToolbar(map.it, () => map.save()));
+new ResizeObserver(() => map.schedule()).observe(map.canvas);
+
+/* =====================================================================
+   FINESTRE MOBILI
+   ===================================================================== */
+let zTop = 10, cascade = 0;
+function createWindow({ title, width, height, fixed, x, y, onClose }) {
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const w = Math.min(width, vw - 16), hh = height ? Math.min(height, vh - 16) : null;
+  const el = h('div', { class: 'win' + (fixed ? ' fixed' : '') });
+  el.style.width = w + 'px'; if (hh) el.style.height = hh + 'px';
+  el.style.left = Math.max(8, x !== undefined ? x : Math.min(vw - w - 8, 70 + cascade * 28)) + 'px';
+  el.style.top = Math.max(8, y !== undefined ? y : Math.min(vh - (hh || 300) - 8, 70 + cascade * 28)) + 'px';
+  if (x === undefined) cascade = (cascade + 1) % 8;
+  el.style.zIndex = ++zTop;
+  const head = h('div', { class: 'win-head' }, h('h3', { text: title }));
+  const body = h('div', { class: 'win-body' });
+  const api = {
+    el, body, children: [],
+    close() { api.children.forEach(c => c.close()); el.remove(); if (onClose) onClose(); },
+  };
+  const x_ = h('button', { class: 'win-x', title: 'Chiudi', 'aria-label': 'Chiudi', html: ICON.close, onclick: () => api.close() });
+  head.append(x_);
+  el.append(head, body);
+  el.addEventListener('pointerdown', () => { el.style.zIndex = ++zTop; }, true);
+  let d = null;
+  head.addEventListener('pointerdown', e => {
+    if (e.target.closest('.win-x')) return;
+    d = { px: e.clientX, py: e.clientY, l: el.offsetLeft, t: el.offsetTop };
+    head.setPointerCapture(e.pointerId);
+  });
+  head.addEventListener('pointermove', e => {
+    if (!d) return;
+    el.style.left = Math.min(Math.max(-el.offsetWidth + 80, d.l + e.clientX - d.px), window.innerWidth - 80) + 'px';
+    el.style.top = Math.min(Math.max(0, d.t + e.clientY - d.py), window.innerHeight - 40) + 'px';
+  });
+  head.addEventListener('pointerup', () => { d = null; });
+  $('#windows').append(el);
+  return api;
+}
+
+/* =====================================================================
+   FINESTRA DI DETTAGLIO DEL PUNTO
+   ===================================================================== */
+function pidTitle(i) { if (S.pidCol) { const v = S.pidCol.get(i); return v == null ? 'nan' : String(v); } return `riga ${i}`; }
+function pidKey(i) { if (S.pidCol) { const v = S.pidCol.get(i); return v == null ? 'nan' : String(v); } return String(i); }
+function infoPairsPanel(i) {
+  const out = [];
+  for (const c of S.info) {
+    const v = c.get(i);
+    if (v == null || v !== v) continue;
+    out.push([c.label, c.kind === 'float' ? v.toFixed(3) : String(v)]);
+  }
+  return out;
+}
+function linregress(x, y) {
+  const n = x.length; let sx = 0, sy = 0;
+  for (let i = 0; i < n; i++) { sx += x[i]; sy += y[i]; }
+  const mx = sx / n, my = sy / n; let sxx = 0, sxy = 0, syy = 0;
+  for (let i = 0; i < n; i++) { const dx = x[i] - mx, dy = y[i] - my; sxx += dx * dx; sxy += dx * dy; syy += dy * dy; }
+  const slope = sxy / sxx;
+  const r = (sxx === 0 || syy === 0) ? 0 : Math.max(-1, Math.min(1, sxy / Math.sqrt(sxx * syy)));
+  return { slope, intercept: my - slope * mx, r };
+}
+
+function dateTicks(t0, t1, pxW) {
+  const H = 36e5, D = 864e5, target = Math.max(3, Math.floor(pxW / 105)), span = t1 - t0;
+  const cands = [['h', 1, H], ['h', 3, 3 * H], ['h', 6, 6 * H], ['h', 12, 12 * H], ['d', 1, D], ['d', 2, 2 * D], ['d', 5, 5 * D], ['d', 10, 10 * D],
+    ['m', 1, 30.44 * D], ['m', 2, 60.9 * D], ['m', 3, 91.3 * D], ['m', 6, 182.6 * D], ['y', 1, 365.25 * D], ['y', 2, 730.5 * D],
+    ['y', 5, 1826 * D], ['y', 10, 3652 * D], ['y', 20, 7305 * D], ['y', 50, 18262 * D], ['y', 100, 36525 * D]];
+  let c = cands[cands.length - 1];
+  for (const k of cands) if (span / k[2] <= target) { c = k; break; }
+  const [u, n, ms] = c, out = [];
+  if (u === 'h' || u === 'd') {
+    for (let k = Math.ceil(t0 / ms); k * ms <= t1; k++) out.push(k * ms);
+  } else if (u === 'm') {
+    const d0 = new Date(t0); let ym = d0.getUTCFullYear() * 12 + d0.getUTCMonth(); ym = Math.ceil(ym / n) * n;
+    for (;; ym += n) { const t = Date.UTC(Math.floor(ym / 12), ym % 12, 1); if (t > t1) break; if (t >= t0) out.push(t); }
+  } else {
+    let y = Math.ceil(new Date(t0).getUTCFullYear() / n) * n;
+    for (;; y += n) { const t = Date.UTC(y, 0, 1); if (t > t1) break; if (t >= t0) out.push(t); }
+  }
+  const label = t => {
+    const d = new Date(t);
+    if (u === 'y') return String(d.getUTCFullYear());
+    if (u === 'm') return MONTHS_IT[d.getUTCMonth()] + ' ' + d.getUTCFullYear();
+    if (u === 'd') return fmtDateIT(t);
+    return pad2(d.getUTCDate()) + '/' + pad2(d.getUTCMonth() + 1) + ' ' + pad2(d.getUTCHours()) + ':00';
+  };
+  return out.map(t => ({ t, label: label(t) }));
+}
+
+class SeriesChart {
+  constructor(canvas, dates, values, pid, onSelect) {
+    this.c = canvas; this.dates = dates; this.values = values; this.pid = pid; this.onSelect = onSelect;
+    this.sel = null; this.raf = 0;
+    const vi = []; for (let i = 0; i < values.length; i++) if (values[i] === values[i]) vi.push(i);
+    this.valid = Int32Array.from(vi);
+    this.reg = null;
+    if (vi.length >= 2) {
+      const d0 = dates[vi[0]];
+      const t = vi.map(i => (dates[i] - d0) / (365.25 * 86400000)), y = vi.map(i => values[i]);
+      if (t[t.length - 1] - t[0] > 0 || Math.max(...t) - Math.min(...t) > 0) {
+        this.reg = linregress(t, y); this.reg.t = t; this.reg.d0 = d0;
+        this.reg.trend = t.map(tt => this.reg.intercept + this.reg.slope * tt);
+      }
+    }
+    this.lims0 = this.autoscale(); this.L = { ...this.lims0 };
+    this.it = new Interactor(canvas, {
+      plot: () => this.plot(), lims: () => ({ ...this.L }),
+      setLims: l => { this.L = this.clamp(l); }, snapshot: () => ({ ...this.L }), restore: s => { this.L = { ...s }; },
+      pick: (x, y) => this.pick(x, y), changed: () => this.schedule(), hasData: () => this.valid.length > 0, dblHome: true,
+    });
+    this.it.reset({ ...this.lims0 });
+    new ResizeObserver(() => this.schedule()).observe(canvas);
+  }
+  clamp(l) {
+    let { x0, x1, y0, y1 } = l;
+    if (x1 - x0 < 3.6e6) { const c = (x0 + x1) / 2; x0 = c - 1.8e6; x1 = c + 1.8e6; }
+    if (y1 - y0 < 1e-6) { const c = (y0 + y1) / 2; y0 = c - 5e-7; y1 = c + 5e-7; }
+    return { x0, x1, y0, y1 };
+  }
+  autoscale() {
+    const v = this.values, d = this.dates, idx = this.valid;
+    if (!idx.length) return { x0: 0, x1: 1, y0: 0, y1: 1 };
+    let xmin = d[idx[0]], xmax = d[idx[idx.length - 1]], ymin = 0, ymax = 0;      // include la linea dello zero
+    for (const i of idx) { if (v[i] < ymin) ymin = v[i]; if (v[i] > ymax) ymax = v[i]; }
+    if (this.reg) for (const t of this.reg.trend) { if (t < ymin) ymin = t; if (t > ymax) ymax = t; }
+    if (xmax === xmin) { xmin -= 864e5; xmax += 864e5; }
+    if (ymax === ymin) { ymin -= 1; ymax += 1; }
+    const px = (xmax - xmin) * .05, py = (ymax - ymin) * .05;
+    return { x0: xmin - px, x1: xmax + px, y0: ymin - py, y1: ymax + py };
+  }
+  plot() { const r = this.c.getBoundingClientRect(); return { x: 66, y: 46, w: Math.max(60, r.width - 66 - 22), h: Math.max(60, r.height - 46 - 64) }; }
+  schedule() { if (!this.raf) this.raf = requestAnimationFrame(() => { this.raf = 0; this.draw(); }); }
+  pick(px, py) {          // dato valido più vicino (raggio 15 px)
+    const P = this.plot(), L = this.L; let best = -1, bd = Infinity;
+    for (const i of this.valid) {
+      const x = P.x + (this.dates[i] - L.x0) / (L.x1 - L.x0) * P.w, y = P.y + (L.y1 - this.values[i]) / (L.y1 - L.y0) * P.h;
+      const dd = (x - px) * (x - px) + (y - py) * (y - py);
+      if (dd < bd) { bd = dd; best = i; }
+    }
+    if (best >= 0 && Math.sqrt(bd) <= 15) { this.sel = best; this.schedule(); this.onSelect(best); }
+  }
+  draw(noToolbarBg) {
+    const { ctx, W, H } = prepCanvas(this.c), P = this.plot(), L = this.L, font = getComputedStyle(document.body).fontFamily;
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
+    const X = t => P.x + (t - L.x0) / (L.x1 - L.x0) * P.w, Y = v => P.y + (L.y1 - v) / (L.y1 - L.y0) * P.h;
+    ctx.font = '600 14px ' + font; ctx.fillStyle = INK; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText(`Serie temporale di spostamento - ${this.pid}`, P.x, 24, Math.max(100, W - P.x - 190));
+
+    // griglia e tick
+    const yt = numTicks(L.y0, L.y1, P.h / 55), xt = dateTicks(L.x0, L.x1, P.w);
+    ctx.strokeStyle = 'rgba(29,44,51,.14)'; ctx.lineWidth = 1; ctx.beginPath();
+    for (const v of yt.ticks) { const y = Math.round(Y(v)) + .5; ctx.moveTo(P.x, y); ctx.lineTo(P.x + P.w, y); }
+    for (const k of xt) { const x = Math.round(X(k.t)) + .5; ctx.moveTo(x, P.y); ctx.lineTo(x, P.y + P.h); }
+    ctx.stroke();
+
+    ctx.save(); ctx.beginPath(); ctx.rect(P.x, P.y, P.w, P.h); ctx.clip();
+    if (L.y0 < 0 && L.y1 > 0) {      // linea dello zero
+      ctx.strokeStyle = '#8b8b8b'; ctx.lineWidth = 1.1; ctx.setLineDash([5, 3.5]);
+      ctx.beginPath(); ctx.moveTo(P.x, Y(0)); ctx.lineTo(P.x + P.w, Y(0)); ctx.stroke(); ctx.setLineDash([]);
+    }
+    // serie (la linea si interrompe sui dati mancanti, come in matplotlib)
+    ctx.strokeStyle = '#2b6cb0'; ctx.lineWidth = 1.4; ctx.lineJoin = 'round'; ctx.beginPath();
+    let pen = false;
+    for (let i = 0; i < this.values.length; i++) {
+      const v = this.values[i];
+      if (v !== v) { pen = false; continue; }
+      const x = X(this.dates[i]), y = Y(v);
+      if (!pen) { ctx.moveTo(x, y); pen = true; } else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.fillStyle = '#2b6cb0'; ctx.beginPath();
+    for (const i of this.valid) { const x = X(this.dates[i]), y = Y(this.values[i]); if (x > P.x - 4 && x < P.x + P.w + 4) { ctx.moveTo(x + 2.2, y); ctx.arc(x, y, 2.2, 0, 6.2832); } }
+    ctx.fill();
+    // regressione lineare
+    if (this.reg) {
+      ctx.strokeStyle = '#d64545'; ctx.lineWidth = 2.4; ctx.setLineDash([7, 4]); ctx.beginPath();
+      this.valid.forEach((i, k) => { const x = X(this.dates[i]), y = Y(this.reg.trend[k]); if (k) ctx.lineTo(x, y); else ctx.moveTo(x, y); });
+      ctx.stroke(); ctx.setLineDash([]);
+    }
+    // punto selezionato
+    if (this.sel !== null) {
+      ctx.strokeStyle = '#d64545'; ctx.lineWidth = 2.6; ctx.beginPath(); ctx.arc(X(this.dates[this.sel]), Y(this.values[this.sel]), 7.5, 0, 6.2832); ctx.stroke();
+    }
+    // riquadro velocità/R² e legenda
+    ctx.font = '12.5px ' + font;
+    const boxes = [];
+    if (this.reg) {
+      const l1 = `Velocità stimata = ${this.reg.slope.toFixed(2)} mm/anno`, l2 = `R² = ${(this.reg.r * this.reg.r).toFixed(3)}`;
+      const bw = Math.max(ctx.measureText(l1).width, ctx.measureText(l2).width) + 20, bh = 46, bx = P.x + 10, by = P.y + 10;
+      ctx.fillStyle = 'rgba(255,255,255,.88)'; ctx.strokeStyle = '#c9d1cf'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 6); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = INK; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(l1, bx + 10, by + 14); ctx.fillText(l2, bx + 10, by + 33);
+      boxes.push({ x: bx, y: by, w: bw, h: bh });
+    }
+    const items = [['Spostamento cumulato', '#2b6cb0', false]];
+    if (this.reg) items.push([`Regressione lineare (${this.reg.slope.toFixed(2)} mm/anno)`, '#d64545', true]);
+    const lw = Math.max(...items.map(it => ctx.measureText(it[0]).width)) + 56, lh = items.length * 20 + 12;
+    const pts = [];
+    const stride = Math.max(1, Math.floor(this.valid.length / 1500));
+    for (let k = 0; k < this.valid.length; k += stride) {
+      const i = this.valid[k]; pts.push([X(this.dates[i]), Y(this.values[i])]);
+      if (this.reg) pts.push([X(this.dates[i]), Y(this.reg.trend[k])]);
+    }
+    const m = 10, cx0 = P.x + m, cx1 = P.x + P.w - lw - m, cy0 = P.y + m, cy1 = P.y + P.h - lh - m;
+    const cand = [[cx1, cy0], [cx0, cy0], [cx0, cy1], [cx1, cy1], [cx1, (cy0 + cy1) / 2], [cx0, (cy0 + cy1) / 2],
+      [(cx0 + cx1) / 2, cy1], [(cx0 + cx1) / 2, cy0], [(cx0 + cx1) / 2, (cy0 + cy1) / 2]];
+    let bestC = cand[0], bestS = Infinity;
+    for (const c of cand) {
+      let s = 0;
+      for (const p of pts) if (p[0] >= c[0] && p[0] <= c[0] + lw && p[1] >= c[1] && p[1] <= c[1] + lh) s++;
+      for (const b of boxes) if (c[0] < b.x + b.w && c[0] + lw > b.x && c[1] < b.y + b.h && c[1] + lh > b.y) s += 1e6;
+      if (s < bestS) { bestS = s; bestC = c; }
+    }
+    const [lx, ly] = bestC;
+    ctx.fillStyle = 'rgba(255,255,255,.88)'; ctx.strokeStyle = '#c9d1cf';
+    ctx.beginPath(); ctx.roundRect(lx, ly, lw, lh, 6); ctx.fill(); ctx.stroke();
+    items.forEach((it, k) => {
+      const yy = ly + 16 + k * 20;
+      ctx.strokeStyle = it[1]; ctx.lineWidth = it[2] ? 2.2 : 1.4; ctx.setLineDash(it[2] ? [6, 3] : []);
+      ctx.beginPath(); ctx.moveTo(lx + 10, yy); ctx.lineTo(lx + 36, yy); ctx.stroke(); ctx.setLineDash([]);
+      if (!it[2]) { ctx.fillStyle = it[1]; ctx.beginPath(); ctx.arc(lx + 23, yy, 2.4, 0, 6.2832); ctx.fill(); }
+      ctx.fillStyle = INK; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(it[0], lx + 44, yy);
+    });
+    this.it.drawOverlay(ctx);
+    ctx.restore();
+
+    // assi
+    ctx.strokeStyle = '#7f8e8b'; ctx.lineWidth = 1; ctx.strokeRect(P.x + .5, P.y + .5, P.w - 1, P.h - 1);
+    ctx.fillStyle = MUTED; ctx.font = '11.5px ' + font; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    const dy = decimalsFor(yt.step);
+    for (const v of yt.ticks) {
+      const y = Y(v); if (y < P.y - 1 || y > P.y + P.h + 1) continue;
+      ctx.beginPath(); ctx.moveTo(P.x - 4, y + .5); ctx.lineTo(P.x, y + .5); ctx.stroke();
+      ctx.fillText(v.toFixed(dy), P.x - 8, y);
+    }
+    ctx.textBaseline = 'top';
+    for (const k of xt) {
+      const x = X(k.t);
+      ctx.beginPath(); ctx.moveTo(x + .5, P.y + P.h); ctx.lineTo(x + .5, P.y + P.h + 4); ctx.stroke();
+      ctx.save(); ctx.translate(x + 3, P.y + P.h + 8); ctx.rotate(-Math.PI / 6); ctx.textAlign = 'right'; ctx.fillText(k.label, 0, 0); ctx.restore();
+    }
+    ctx.fillStyle = INK; ctx.font = '12.5px ' + font; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+    ctx.fillText('Data', P.x + P.w / 2, H - 6);
+    ctx.save(); ctx.translate(15, P.y + P.h / 2); ctx.rotate(-Math.PI / 2); ctx.fillText('Spostamento cumulato (mm)', 0, 0); ctx.restore();
+  }
+  save() { this.draw(); this.c.toBlob(b => b && downloadBlob(b, 'egms_' + safeName(this.pid) + '.png'), 'image/png'); }
+}
+
+function openDetail(idx) {
+  const pid = pidTitle(idx);
+  const win = createWindow({ title: `Dettaglio punto - ${pid}`, width: 980, height: 680 });
+  const body = win.body;
+
+  // pannello informazioni
+  const dl = h('dl');
+  for (const [label, val] of infoPairsPanel(idx)) dl.append(h('div', { class: 'row' }, h('dt', { text: label }), h('dd', { text: val })));
+  body.append(h('section', { class: 'info' }, h('h4', { text: 'Informazioni punto' }), dl));
+
+  // grafico serie temporale
+  const box = h('div', { class: 'chart-box' });
+  body.append(box);
+  if (S.dateCols.length) {
+    const values = S.ts.slice(idx * S.T, (idx + 1) * S.T);       // copia indipendente dei dati del punto
+    const canvas = h('canvas'); box.append(canvas);
+    const dates = S.dates.slice();
+    let popup = null;
+    const chart = new SeriesChart(canvas, dates, values, pid, i => showValuePopup(i));
+    box.append(Object.assign(makeToolbar(chart.it, () => chart.save())));
+    body.append(h('div', { class: 'win-hint', text: 'Rotella per zoomare, trascina per spostarti, clic su un punto per aprirne i dettagli, doppio clic per ripristinare la vista.' }));
+
+    const showValuePopup = i => {
+      if (popup) { const k = win.children.indexOf(popup); if (k >= 0) win.children.splice(k, 1); popup.el.remove(); popup = null; }
+      const v = values[i], reg = chart.reg;
+      const rows = [['Data', fmtDateIT(dates[i])], ['Spostamento cumulato', v.toFixed(2) + ' mm']];
+      if (reg) {
+        rows.push(['Velocità da regressione', reg.slope.toFixed(2) + ' mm/anno']);
+        rows.push(['R² della regressione', (reg.r * reg.r).toFixed(3)]);
+      }
+      if (i > 0) {
+        let prev = NaN; for (let k = i - 1; k >= 0; k--) if (values[k] === values[k]) { prev = values[k]; break; }
+        if (prev === prev) rows.push(['Variazione dal punto precedente valido', (v - prev).toFixed(2) + ' mm']);
+      }
+      if (chart.valid.length) rows.push(["Spostamento totale dall'inizio serie", (v - values[chart.valid[0]]).toFixed(2) + ' mm']);
+
+      const r = win.el.getBoundingClientRect();
+      const p = createWindow({ title: `Valore del punto - ${pid}`, width: 360, fixed: true, x: Math.min(window.innerWidth - 380, r.right + 12), y: r.top + 60 });
+      const closeBtn = h('button', { class: 'btn', text: 'Chiudi', onclick: () => { p.close(); const k = win.children.indexOf(p); if (k >= 0) win.children.splice(k, 1); if (popup === p) popup = null; } });
+      p.body.className = 'win-body pop-body';
+      p.body.append(h('div', { class: 'pop-pid', text: `PID: ${pid}` }),
+        h('table', null, rows.map(([a, b]) => h('tr', null, h('td', { text: a + ':' }), h('td', { text: b })))),
+        h('div', { class: 'pop-foot' }, closeBtn));
+      popup = p; win.children.push(p);
+    };
+  } else {
+    box.append(h('div', { class: 'none', text: 'Nessuna serie temporale disponibile nel CSV' }));
+  }
+  body.append(h('div', { class: 'win-foot' }, h('button', { class: 'btn', text: 'Chiudi', onclick: () => win.close() })));
+}
+
+/* =====================================================================
+   ESPORTAZIONE KML  (+ pagina HTML con i grafici interattivi)
+   ===================================================================== */
+const CHARTS_TEMPLATE = `<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>
+  :root { color-scheme: light; }
+  body { font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", Roboto, Arial, sans-serif; margin: 0; background: #eef1ef; color: #1d2c33; }
+  header { background: #1d2c33; color: #fff; padding: 14px 20px; }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  #picker { padding: 14px 20px; background: #fbfcfb; border-bottom: 1px solid #d2d9d7; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  #picker input { padding: 8px 10px; font-size: 14px; width: 260px; max-width: 100%; border: 1px solid #b9c4c1; border-radius: 7px; }
+  #picker button { padding: 8px 14px; font-size: 14px; border: none; border-radius: 7px; background: #0e6f7b; color: #fff; cursor: pointer; }
+  #picker button:hover { background: #0b5963; }
+  #main { display: flex; flex-wrap: wrap; gap: 16px; padding: 16px 20px; }
+  #chartCard { position: relative; background: #fff; border: 1px solid #d2d9d7; border-radius: 10px; padding: 12px; flex: 1 1 640px; min-width: 0; }
+  #chartTitle { font-weight: 600; margin: 4px 6px 10px; }
+  #hint { color: #5a6a72; font-size: 12px; margin: 0 6px 8px; }
+  #tooltip { font-size: 13px; margin: 0 6px 6px; min-height: 18px; color: #0e6f7b; font-weight: 600; }
+  canvas { width: 100%; height: 460px; display: block; cursor: grab; border-radius: 6px; background: #fbfbfc; }
+  canvas:active { cursor: grabbing; }
+  #infoCard { background: #fff; border: 1px solid #d2d9d7; border-radius: 10px; padding: 16px; flex: 1 1 280px; max-width: 340px; }
+  #infoCard table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  #infoCard td { padding: 4px 2px; border-bottom: 1px solid #eee; vertical-align: top; }
+  #infoCard td:first-child { color: #555; padding-right: 8px; white-space: nowrap; }
+  #empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 40px; text-align: center; color: #5a6a72; background: #fff; border-radius: 10px; }
+</style>
+</head>
+<body>
+<header><h1>__TITLE__</h1></header>
+<div id="picker">
+  <input id="pidInput" list="pidList" placeholder="Cerca un PID..." />
+  <datalist id="pidList"></datalist>
+  <button id="goBtn">Mostra grafico</button>
+  <button id="resetBtn" title="Ripristina zoom">Reset zoom</button>
+</div>
+<div id="main">
+  <div id="chartCard">
+    <div id="chartTitle">Nessun punto selezionato</div>
+    <div id="hint">Rotella per zoomare, trascina per spostarti (pan).</div>
+    <div id="tooltip">&nbsp;</div>
+    <canvas id="chart" width="900" height="460"></canvas>
+    <div id="empty">Cerca un PID qui sopra, oppure apri il grafico cliccando un punto nel file KML.</div>
+  </div>
+  <div id="infoCard">
+    <div style="font-weight:600;margin-bottom:10px;">Informazioni punto</div>
+    <table id="infoTable"></table>
+  </div>
+</div>
+
+<script>
+const PAYLOAD = __JSON_DATA__;
+const DATES = PAYLOAD.dates;
+const DATA = PAYLOAD.points;
+const allPids = Object.keys(DATA);
+const has = pid => Object.prototype.hasOwnProperty.call(DATA, pid);
+
+const pidInput = document.getElementById('pidInput');
+const pidList = document.getElementById('pidList');
+const goBtn = document.getElementById('goBtn');
+const resetBtn = document.getElementById('resetBtn');
+const chartTitle = document.getElementById('chartTitle');
+const tooltipEl = document.getElementById('tooltip');
+const infoTable = document.getElementById('infoTable');
+const emptyEl = document.getElementById('empty');
+const canvas = document.getElementById('chart');
+const ctx = canvas.getContext('2d');
+
+// popola il datalist per la ricerca (limitato per non appesantire troppo il DOM)
+const MAX_DATALIST = 3000;
+allPids.slice(0, MAX_DATALIST).forEach(pid => {
+  const opt = document.createElement('option');
+  opt.value = pid;
+  pidList.appendChild(opt);
+});
+
+let currentPid = null;
+let xs = [];      // timestamp (ms) di ogni misura
+let ys = [];
+let fullMin = 0, fullMax = 1;
+let viewMin = 0, viewMax = 1;
+let dragging = false;
+let dragStartX = 0, dragStartView = [0, 0];
+
+const margin = { top: 16, right: 20, bottom: 34, left: 56 };
+
+function resizeCanvasForDPR() {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = Math.max(300, rect.width) * dpr;
+  canvas.height = 460 * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function loadPid(pid) {
+  const entry = DATA[pid];
+  if (!entry) { return; }
+  currentPid = pid;
+  emptyEl.style.display = 'none';
+  pidInput.value = pid;
+  chartTitle.textContent = 'Serie temporale di spostamento - ' + pid;
+
+  const vArr = entry.v || [];
+  xs = []; ys = [];
+  for (let i = 0; i < vArr.length; i++) {
+    if (vArr[i] !== null && vArr[i] !== undefined) {
+      xs.push(new Date(DATES[i]).getTime());
+      ys.push(vArr[i]);
+    }
+  }
+
+  if (xs.length > 0) {
+    fullMin = xs[0]; fullMax = xs[xs.length - 1];
+    if (fullMin === fullMax) { fullMin -= 86400000; fullMax += 86400000; }
+    viewMin = fullMin; viewMax = fullMax;
+  } else {
+    fullMin = 0; fullMax = 1; viewMin = 0; viewMax = 1;
+  }
+
+  infoTable.innerHTML = '';
+  const info = entry.info || {};
+  Object.keys(info).forEach(label => {
+    const tr = document.createElement('tr');
+    const td1 = document.createElement('td');
+    td1.textContent = label;
+    const td2 = document.createElement('td');
+    td2.textContent = info[label];
+    tr.appendChild(td1); tr.appendChild(td2);
+    infoTable.appendChild(tr);
+  });
+
+  tooltipEl.innerHTML = '&nbsp;';
+  location.hash = encodeURIComponent(pid);
+  resizeCanvasForDPR();
+  draw();
+}
+
+function visibleYRange() {
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < xs.length; i++) {
+    if (xs[i] >= viewMin && xs[i] <= viewMax) {
+      if (ys[i] < lo) lo = ys[i];
+      if (ys[i] > hi) hi = ys[i];
+    }
+  }
+  if (!isFinite(lo)) { lo = 0; hi = 1; }
+  if (lo === hi) { lo -= 1; hi += 1; }
+  const pad = (hi - lo) * 0.1;
+  return [lo - pad, hi + pad];
+}
+
+function draw() {
+  const rect = canvas.getBoundingClientRect();
+  const W = rect.width, H = 460;
+  ctx.clearRect(0, 0, W, H);
+  if (xs.length === 0) {
+    ctx.fillStyle = '#888';
+    ctx.font = '14px sans-serif';
+    ctx.fillText('Nessuna serie temporale disponibile per questo punto.', margin.left, H / 2);
+    return;
+  }
+
+  const plotW = W - margin.left - margin.right;
+  const plotH = H - margin.top - margin.bottom;
+  const [yMin, yMax] = visibleYRange();
+
+  const xToPx = t => margin.left + (t - viewMin) / (viewMax - viewMin) * plotW;
+  const yToPx = v => margin.top + (1 - (v - yMin) / (yMax - yMin)) * plotH;
+
+  // griglia + etichette Y
+  ctx.strokeStyle = '#e6e6e6'; ctx.fillStyle = '#666';
+  ctx.font = '11px sans-serif'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  const nY = 5;
+  for (let i = 0; i <= nY; i++) {
+    const v = yMin + (yMax - yMin) * i / nY;
+    const py = yToPx(v);
+    ctx.beginPath(); ctx.moveTo(margin.left, py); ctx.lineTo(W - margin.right, py); ctx.stroke();
+    ctx.fillText(v.toFixed(1), margin.left - 6, py);
+  }
+
+  // linea zero di riferimento
+  if (yMin < 0 && yMax > 0) {
+    ctx.strokeStyle = '#bbb'; ctx.setLineDash([4, 3]);
+    const py0 = yToPx(0);
+    ctx.beginPath(); ctx.moveTo(margin.left, py0); ctx.lineTo(W - margin.right, py0); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // etichette X (date)
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  const nX = 6;
+  for (let i = 0; i <= nX; i++) {
+    const t = viewMin + (viewMax - viewMin) * i / nX;
+    const px = xToPx(t);
+    const d = new Date(t);
+    const label = d.toISOString().slice(0, 10);
+    ctx.fillText(label, px, H - margin.bottom + 8);
+  }
+
+  // serie: linea + marker, solo punti nella finestra visibile
+  ctx.strokeStyle = '#2b6cb0'; ctx.lineWidth = 1.4; ctx.beginPath();
+  let started = false;
+  for (let i = 0; i < xs.length; i++) {
+    if (xs[i] < viewMin || xs[i] > viewMax) continue;
+    const px = xToPx(xs[i]), py = yToPx(ys[i]);
+    if (!started) { ctx.moveTo(px, py); started = true; } else { ctx.lineTo(px, py); }
+  }
+  ctx.stroke();
+
+  ctx.fillStyle = '#2b6cb0';
+  for (let i = 0; i < xs.length; i++) {
+    if (xs[i] < viewMin || xs[i] > viewMax) continue;
+    const px = xToPx(xs[i]), py = yToPx(ys[i]);
+    ctx.beginPath(); ctx.arc(px, py, 2.2, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // assi
+  ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(margin.left, margin.top); ctx.lineTo(margin.left, H - margin.bottom);
+  ctx.lineTo(W - margin.right, H - margin.bottom);
+  ctx.stroke();
+}
+
+function clampView(min, max) {
+  const fullSpan = fullMax - fullMin;
+  const minSpan = Math.max(fullSpan / 500, 3600000); // non zoomare oltre ~1 ora
+  let m0 = min, m1 = max;
+  if (m1 - m0 < minSpan) {
+    const c = (m0 + m1) / 2;
+    m0 = c - minSpan / 2; m1 = c + minSpan / 2;
+  }
+  if (m1 - m0 > fullSpan) { m0 = fullMin; m1 = fullMax; }
+  if (m0 < fullMin) { m1 += (fullMin - m0); m0 = fullMin; }
+  if (m1 > fullMax) { m0 -= (m1 - fullMax); m1 = fullMax; }
+  m0 = Math.max(m0, fullMin); m1 = Math.min(m1, fullMax);
+  return [m0, m1];
+}
+
+canvas.addEventListener('wheel', ev => {
+  if (xs.length === 0) return;
+  ev.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const plotW = rect.width - margin.left - margin.right;
+  const px = ev.clientX - rect.left - margin.left;
+  const frac = Math.min(Math.max(px / plotW, 0), 1);
+  const cursorT = viewMin + frac * (viewMax - viewMin);
+  const scale = ev.deltaY > 0 ? 1.25 : 1 / 1.25;
+  const newSpan = (viewMax - viewMin) * scale;
+  let newMin = cursorT - frac * newSpan;
+  let newMax = newMin + newSpan;
+  [newMin, newMax] = clampView(newMin, newMax);
+  viewMin = newMin; viewMax = newMax;
+  draw();
+}, { passive: false });
+
+canvas.addEventListener('mousedown', ev => {
+  if (xs.length === 0) return;
+  dragging = true;
+  dragStartX = ev.clientX;
+  dragStartView = [viewMin, viewMax];
+});
+window.addEventListener('mouseup', () => { dragging = false; });
+window.addEventListener('mousemove', ev => {
+  if (!dragging || xs.length === 0) return;
+  const rect = canvas.getBoundingClientRect();
+  const plotW = rect.width - margin.left - margin.right;
+  const deltaPx = ev.clientX - dragStartX;
+  const deltaT = -deltaPx / plotW * (dragStartView[1] - dragStartView[0]);
+  let newMin = dragStartView[0] + deltaT;
+  let newMax = dragStartView[1] + deltaT;
+  [newMin, newMax] = clampView(newMin, newMax);
+  viewMin = newMin; viewMax = newMax;
+  draw();
+});
+
+canvas.addEventListener('mousemove', ev => {
+  if (dragging || xs.length === 0) return;
+  const rect = canvas.getBoundingClientRect();
+  const plotW = rect.width - margin.left - margin.right;
+  const px = ev.clientX - rect.left - margin.left;
+  const t = viewMin + Math.min(Math.max(px / plotW, 0), 1) * (viewMax - viewMin);
+  let bestI = -1, bestD = Infinity;
+  for (let i = 0; i < xs.length; i++) {
+    const d = Math.abs(xs[i] - t);
+    if (d < bestD) { bestD = d; bestI = i; }
+  }
+  if (bestI >= 0) {
+    const d = new Date(xs[bestI]).toISOString().slice(0, 10);
+    tooltipEl.textContent = 'Data: ' + d + '   |   Spostamento: ' + ys[bestI].toFixed(2) + ' mm';
+  }
+});
+canvas.addEventListener('mouseleave', () => { tooltipEl.innerHTML = '&nbsp;'; });
+
+resetBtn.addEventListener('click', () => {
+  if (xs.length === 0) return;
+  viewMin = fullMin; viewMax = fullMax;
+  draw();
+});
+goBtn.addEventListener('click', () => {
+  const pid = pidInput.value.trim();
+  if (has(pid)) loadPid(pid);
+  else alert('PID non trovato: ' + pid);
+});
+pidInput.addEventListener('keydown', ev => {
+  if (ev.key === 'Enter') goBtn.click();
+});
+window.addEventListener('resize', () => { if (currentPid) { resizeCanvasForDPR(); draw(); } });
+
+// avvio: leggo il PID dal frammento dell'URL (usato dai link nel KML)
+let initialPid = '';
+try { initialPid = decodeURIComponent(location.hash.replace('#', '')); } catch (e) { initialPid = ''; }
+if (initialPid && has(initialPid)) {
+  loadPid(initialPid);
+}
+<\/script>
+</body>
+</html>
+`;
+
+const jsonSafe = v => JSON.stringify(v).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+const round2 = x => Math.round(x * 100) / 100;
+const round3 = x => Math.round(x * 1000) / 1000;
+
+async function buildChartsHtml(onProgress) {
+  const haveTs = S.dateCols.length > 0, T = S.T;
+  const dateLabels = haveTs ? S.dates.map(ms => new Date(ms).toISOString().slice(0, 10)) : [];
+  const parts = [];
+  const [pre, post] = CHARTS_TEMPLATE.split('__JSON_DATA__');
+  const title = 'EGMS - Grafici di spostamento interattivi';
+  parts.push(pre.split('__TITLE__').join(title));
+  parts.push('{"dates":' + jsonSafe(dateLabels) + ',"points":{');
+  let buf = [];
+  for (let i = 0; i < S.n; i++) {
+    let s = (i ? ',' : '') + jsonSafe(pidKey(i)) + ':{';
+    if (haveTs) {
+      const vals = new Array(T), base = i * T;
+      for (let j = 0; j < T; j++) { const v = S.ts[base + j]; vals[j] = v === v ? String(round2(v)) : 'null'; }
+      s += '"v":[' + vals.join(',') + '],';
+    }
+    const info = [];
+    for (const c of S.info) {
+      const v = c.get(i);
+      if (v == null || v !== v) continue;
+      info.push(jsonSafe(c.label) + ':' + (c.kind === 'float' ? String(round3(v)) : jsonSafe(String(v))));
+    }
+    s += '"info":{' + info.join(',') + '}}';
+    buf.push(s);
+    if (buf.length >= 500) { parts.push(buf.join('')); buf = []; }
+    if (i % 2000 === 0) { onProgress(i / S.n); await sleep0(); }
+  }
+  parts.push(buf.join(''));
+  parts.push('}}' + post.split('__TITLE__').join(title));
+  return new Blob(parts, { type: 'text/html;charset=utf-8' });
+}
+
+async function buildKml(chartsFilename, onProgress) {
+  // stessa palette e scala -10/+10 della mappa, quantizzata in 41 stili condivisi
+  const nBins = 41, binColors = [];
+  for (let k = 0; k < nBins; k++) binColors.push(kmlColor(cmapIndex(-10 + k * 0.5)));
+  const haveTs = S.dateCols.length > 0, T = S.T;
+  const firstDate = haveTs ? fmtDateIT(S.dates[0]) : '', lastDate = haveTs ? fmtDateIT(S.dates[T - 1]) : '';
+
+  const parts = [];
+  const head = ['<?xml version="1.0" encoding="UTF-8"?>', '<kml xmlns="http://www.opengis.net/kml/2.2">', '<Document>',
+    `<name>${escXml('EGMS - Velocita media di spostamento del suolo')}</name>`,
+    `<description>${escXml('Esportato da EGMS Viewer. Colore per mean_velocity: -10 rosso, +10 blu (jet_r).')}</description>`];
+  binColors.forEach((color, k) => {
+    head.push(`<Style id="vel_${k}">`, '<IconStyle><scale>0.5</scale>', `<color>${color}</color>`,
+      '<Icon><href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href></Icon>', '</IconStyle>',
+      '<LabelStyle><scale>0</scale></LabelStyle>', '</Style>');
+  });
+  parts.push(head.join('\n'));
+
+  let buf = [];
+  for (let i = 0; i < S.n; i++) {
+    const v = S.vel[i];
+    const bin = v === v ? Math.min(nBins - 1, Math.max(0, roundHalfEven((Math.min(10, Math.max(-10, v)) + 10) / 0.5))) : 0;
+    const rows = [];
+    for (const c of S.info) {
+      const val = c.get(i);
+      if (val == null || val !== val) continue;
+      rows.push(`<tr><td><b>${escXml(c.label)}</b></td><td>${escXml(c.kind === 'float' ? val.toFixed(3) : String(val))}</td></tr>`);
+    }
+    if (haveTs) {
+      let fv = NaN, lv = NaN; const base = i * T;
+      for (let j = 0; j < T; j++) { const x = S.ts[base + j]; if (x === x) { fv = x; break; } }
+      for (let j = T - 1; j >= 0; j--) { const x = S.ts[base + j]; if (x === x) { lv = x; break; } }
+      if (fv === fv && lv === lv) {
+        rows.push(`<tr><td><b>Spostamento al ${firstDate}</b></td><td>${fv.toFixed(2)} mm</td></tr>`);
+        rows.push(`<tr><td><b>Spostamento al ${lastDate}</b></td><td>${lv.toFixed(2)} mm</td></tr>`);
+        rows.push(`<tr><td><b>Spostamento totale nel periodo</b></td><td>${(lv - fv).toFixed(2)} mm</td></tr>`);
+      }
+    }
+    let link = '';
+    if (haveTs) {
+      link = `<p><a href="${escXml(chartsFilename)}#${encodeURIComponent(pidKey(i))}" target="_blank">&#128200; Apri grafico interattivo e zoomabile</a></p>`;
+    }
+    const description = '<![CDATA[' + link + '<table>' + rows.join('') + '</table>]]>';
+    buf.push('<Placemark>', `<name>${escXml(pidKey(i))}</name>`, `<styleUrl>#vel_${bin}</styleUrl>`,
+      `<description>${description}</description>`, '<Point>', `<coordinates>${S.lon[i].toFixed(6)},${S.lat[i].toFixed(6)},0</coordinates>`, '</Point>', '</Placemark>');
+    if (buf.length >= 4000) { parts.push('\n' + buf.join('\n')); buf = []; }
+    if (i % 2000 === 0) { onProgress(i / S.n); await sleep0(); }
+  }
+  if (buf.length) parts.push('\n' + buf.join('\n'));
+  parts.push('\n</Document>\n</kml>');
+  return new Blob(parts, { type: 'application/vnd.google-earth.kml+xml;charset=utf-8' });
+}
+
+async function exportKml() {
+  if (!S.loaded) { await msgBox('warning', 'Nessun dato', 'Carica prima un CSV EGMS.'); return; }
+  const name = await askFilename('Esporta come KML',
+    'Verranno scaricati due file da tenere nella stessa cartella: il KML con i punti e la pagina HTML dei grafici interattivi (NOME_charts.html), a cui rimandano i link dei punti.',
+    baseName(S.fileName) || 'egms', '.kml');
+  if (!name) return;
+  const chartsName = name + '_charts.html';
+  try {
+    showProgress('Preparazione dei grafici interattivi…');
+    const charts = await buildChartsHtml(f => setProgress(f * 0.5));
+    setProgress(0.5, 'Scrittura del file KML…');
+    const kml = await buildKml(chartsName, f => setProgress(0.5 + f * 0.5));
+    hideProgress();
+    downloadBlob(kml, name + '.kml');
+    setTimeout(() => downloadBlob(charts, chartsName), 400);
+  } catch (exc) {
+    hideProgress();
+    await msgBox('error', 'Errore esportazione', 'Non sono riuscito a scrivere i file:\n' + (exc && exc.message ? exc.message : exc));
+    return;
+  }
+  await msgBox('info', 'Esportazione completata',
+    `File KML scaricato: ${name}.kml\n\nGrafici interattivi scaricati: ${chartsName}\n\n` +
+    'Tieni i due file nella stessa cartella: cliccando su un punto nel KML si apre un link che porta al grafico interattivo e zoomabile nel browser.');
+}
+
+/* =====================================================================
+   ESPORTAZIONE SHAPEFILE  (scritto direttamente: .shp .shx .dbf .prj .cpg in un archivio ZIP)
+   ===================================================================== */
+const CRC_T = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(u8) { let c = ~0; for (let i = 0; i < u8.length; i++) c = CRC_T[(c ^ u8[i]) & 255] ^ (c >>> 8); return (~c) >>> 0; }
+
+function makeZip(files) {
+  const enc = new TextEncoder(), parts = [], central = [];
+  const now = new Date();
+  const dosTime = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1);
+  const dosDate = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+  let offset = 0;
+  for (const f of files) {
+    const nm = enc.encode(f.name), crc = crc32(f.data), size = f.data.length;
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true); lh.setUint16(8, 0, true);
+    lh.setUint16(10, dosTime, true); lh.setUint16(12, dosDate, true); lh.setUint32(14, crc, true);
+    lh.setUint32(18, size, true); lh.setUint32(22, size, true); lh.setUint16(26, nm.length, true); lh.setUint16(28, 0, true);
+    parts.push(lh.buffer, nm, f.data);
+    const ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(8, 0x0800, true);
+    ch.setUint16(10, 0, true); ch.setUint16(12, dosTime, true); ch.setUint16(14, dosDate, true); ch.setUint32(16, crc, true);
+    ch.setUint32(20, size, true); ch.setUint32(24, size, true); ch.setUint16(28, nm.length, true);
+    ch.setUint32(42, offset, true);
+    central.push(ch.buffer, nm);
+    offset += 30 + nm.length + size;
+  }
+  const cdSize = central.reduce((a, b) => a + b.byteLength, 0);
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true); end.setUint16(8, files.length, true); end.setUint16(10, files.length, true);
+  end.setUint32(12, cdSize, true); end.setUint32(16, offset, true);
+  return new Blob([...parts, ...central, end.buffer], { type: 'application/zip' });
+}
+
+function buildShapefile() {
+  // Campi principali utili alla tematizzazione (nomi DBF: max 10 caratteri, unici)
+  const preferred = ['pid', 'mp_type', 'latitude', 'longitude', 'height', 'mean_velocity', 'mean_velocity_std',
+    'acceleration', 'temporal_coherence', 'amplitude_dispersion', 'rmse', 'incidence_angle', 'track_angle'];
+  const cols = preferred.filter(c => S.infoByName[c]).map(c => S.infoByName[c]);
+  const used = new Set(), n = S.n, enc = new TextEncoder();
+  const fields = cols.map(c => {
+    let base = String(c.name).replace(/[^A-Za-z0-9_]/g, '_').toUpperCase().slice(0, 10);
+    if (!base) base = 'FIELD';
+    let name = base, k = 1;
+    while (used.has(name)) { const suf = String(k); name = base.slice(0, 10 - suf.length) + suf; k++; }
+    used.add(name);
+    const f = { col: c, name, type: 'N', len: 24, dec: 15 };
+    if (c.kind === 'int') { f.len = 18; f.dec = 0; }
+    else if (c.kind === 'str') {
+      f.type = 'C'; let m = 1;
+      for (let i = 0; i < n; i++) { const v = c.get(i); if (v != null) { const l = enc.encode(String(v)).length; if (l > m) m = l; } }
+      f.len = Math.min(254, m); f.dec = 0;
+    }
+    return f;
+  });
+
+  // ---- DBF
+  const recLen = 1 + fields.reduce((a, f) => a + f.len, 0), headLen = 32 + 32 * fields.length + 1;
+  const dbf = new Uint8Array(headLen + n * recLen + 1), dv = new DataView(dbf.buffer);
+  const now = new Date();
+  dbf[0] = 3; dbf[1] = now.getFullYear() - 1900; dbf[2] = now.getMonth() + 1; dbf[3] = now.getDate();
+  dv.setUint32(4, n, true); dv.setUint16(8, headLen, true); dv.setUint16(10, recLen, true);
+  fields.forEach((f, k) => {
+    const o = 32 + 32 * k;
+    for (let i = 0; i < f.name.length; i++) dbf[o + i] = f.name.charCodeAt(i);
+    dbf[o + 11] = f.type.charCodeAt(0); dbf[o + 16] = f.len; dbf[o + 17] = f.dec;
+  });
+  dbf[headLen - 1] = 0x0D;
+  let o = headLen;
+  for (let i = 0; i < n; i++) {
+    dbf[o++] = 0x20;
+    for (const f of fields) {
+      const v = f.col.get(i);
+      if (v == null || (typeof v === 'number' && v !== v)) { dbf.fill(0x20, o, o + f.len); o += f.len; continue; }
+      if (f.type === 'N') {
+        let s = f.dec ? v.toFixed(f.dec) : String(Math.round(v)), d = f.dec;
+        while (s.length > f.len && d > 0) { d--; s = v.toFixed(d); }
+        if (s.length > f.len) s = s.slice(0, f.len);
+        const padn = f.len - s.length; dbf.fill(0x20, o, o + padn);
+        for (let q = 0; q < s.length; q++) dbf[o + padn + q] = s.charCodeAt(q);
+      } else {
+        const b = enc.encode(String(v)), m = Math.min(b.length, f.len);
+        dbf.set(b.subarray(0, m), o); if (m < f.len) dbf.fill(0x20, o + m, o + f.len);
+      }
+      o += f.len;
+    }
+  }
+  dbf[o] = 0x1A;
+
+  // ---- SHP / SHX (punti, WGS84)
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  const ok = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    const x = S.lon[i], y = S.lat[i];
+    if (x === x && y === y && isFinite(x) && isFinite(y)) {
+      ok[i] = 1; if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y;
+    }
+  }
+  if (!isFinite(minX)) { minX = minY = maxX = maxY = 0; }
+  let shpLen = 100; for (let i = 0; i < n; i++) shpLen += 8 + (ok[i] ? 20 : 4);
+  const shp = new Uint8Array(shpLen), sv = new DataView(shp.buffer);
+  const shx = new Uint8Array(100 + 8 * n), xv = new DataView(shx.buffer);
+  const header = (v, lenBytes) => {
+    v.setInt32(0, 9994, false); v.setInt32(24, lenBytes / 2, false); v.setInt32(28, 1000, true); v.setInt32(32, 1, true);
+    v.setFloat64(36, minX, true); v.setFloat64(44, minY, true); v.setFloat64(52, maxX, true); v.setFloat64(60, maxY, true);
+  };
+  header(sv, shpLen); header(xv, 100 + 8 * n);
+  let p = 100;
+  for (let i = 0; i < n; i++) {
+    const clen = ok[i] ? 20 : 4;
+    sv.setInt32(p, i + 1, false); sv.setInt32(p + 4, clen / 2, false);
+    xv.setInt32(100 + 8 * i, p / 2, false); xv.setInt32(104 + 8 * i, clen / 2, false);
+    if (ok[i]) { sv.setInt32(p + 8, 1, true); sv.setFloat64(p + 12, S.lon[i], true); sv.setFloat64(p + 20, S.lat[i], true); }
+    else sv.setInt32(p + 8, 0, true);
+    p += 8 + clen;
+  }
+  const prj = enc.encode('GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137.0,298.257223563]],PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]]');
+  return { shp, shx, dbf, prj, cpg: enc.encode('UTF-8') };
+}
+
+async function exportShapefile() {
+  if (!S.loaded) { await msgBox('warning', 'Nessun dato', 'Carica prima un CSV EGMS.'); return; }
+  const name = await askFilename('Esporta come Shapefile',
+    'Verrà scaricato un archivio ZIP con i file .shp, .shx, .dbf, .prj e .cpg, pronto da aprire in QGIS (basta trascinare lo ZIP nel progetto).',
+    baseName(S.fileName) || 'egms', '.shp');
+  if (!name) return;
+  try {
+    showProgress('Scrittura dello Shapefile…'); await sleep0(); await sleep0();
+    const f = buildShapefile();
+    const zip = makeZip([
+      { name: name + '.shp', data: f.shp }, { name: name + '.shx', data: f.shx }, { name: name + '.dbf', data: f.dbf },
+      { name: name + '.prj', data: f.prj }, { name: name + '.cpg', data: f.cpg },
+    ]);
+    hideProgress();
+    downloadBlob(zip, name + '.zip');
+  } catch (exc) {
+    hideProgress();
+    await msgBox('error', 'Errore esportazione Shapefile', 'Non sono riuscito a scrivere lo Shapefile:\n' + (exc && exc.message ? exc.message : exc));
+    return;
+  }
+  await msgBox('info', 'Esportazione completata',
+    `Shapefile scaricato: ${name}.zip\n\n` +
+    'Sono stati esportati i principali campi EGMS e la geometria puntuale in EPSG:4326. ' +
+    'Le serie temporali non sono incluse per i limiti del formato Shapefile (nomi/campi DBF).');
+}
+
+/* =====================================================================
+   COLLEGAMENTI INTERFACCIA
+   ===================================================================== */
+const fileInput = $('#fileInput');
+const pickFile = () => { fileInput.value = ''; fileInput.click(); };
+$('#btnLoad').addEventListener('click', pickFile);
+$('#btnLoad2').addEventListener('click', pickFile);
+fileInput.addEventListener('change', () => loadFile(fileInput.files[0]));
+$('#btnKml').addEventListener('click', exportKml);
+$('#btnShp').addEventListener('click', exportShapefile);
+$('#chkBase').addEventListener('change', () => {
+  base.ok = 0; base.err = 0; base.warned = false;
+  if (S.loaded) { if (!basemapOn()) setStatus(statsStatus()); map.draw(); }
+});
+const wrap = $('#mapWrap');
+['dragenter', 'dragover'].forEach(ev => wrap.addEventListener(ev, e => { e.preventDefault(); wrap.classList.add('dropping'); }));
+['dragleave', 'drop'].forEach(ev => wrap.addEventListener(ev, e => { e.preventDefault(); wrap.classList.remove('dropping'); }));
+wrap.addEventListener('drop', e => { const f = e.dataTransfer && e.dataTransfer.files[0]; if (f) loadFile(f); });
+map.draw();
+</script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+services:
+  - type: web
+    runtime: static
+    name: egmsviewer
+    buildCommand: echo "nessuna build"
+    staticPublishPath: .
+    headers:
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: X-Frame-Options
+        value: SAMEORIGIN
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
